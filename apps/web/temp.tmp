@@ -1,0 +1,171 @@
+ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â»Ãƒâ€šÃ‚Â¿export type MemberStatus = 'pending' | 'active' | 'suspended';
+
+export type BranchMembershipStatus = 'requested' | 'approved' | 'rejected' | 'ended';
+export type PrivacyLevel = 'public' | 'public_to_members' | 'private';
+
+export interface BranchSummary {
+  id: string;
+  name: string;
+  country?: string;
+}
+
+export interface ClassSummary {
+  id: string;
+  label: string;
+  entryYear: number;
+}
+
+export interface ClassSetDTO extends ClassSummary {
+  status: 'active' | 'inactive';
+}
+
+export interface UserDTO {
+  id: string;
+  name: string;
+  email: string;
+  status: MemberStatus;
+}
+
+export interface ProfileDTO {
+  id: string;
+  userId: string;\r\n  userName?: string;
+  title?: string;
+  firstName: string;
+  middleName?: string | null;
+  lastName: string;
+  dobDay?: number | null;
+  dobMonth?: number | null;
+  dobYear?: number | null;
+  sex?: string | null;
+  stateOfOrigin?: string | null;
+  lgaOfOrigin?: string | null;
+  residence?: {
+    houseNo?: string | null;
+    street?: string | null;
+    area?: string | null;
+    city?: string | null;
+    country?: string | null;
+  };
+  occupation?: string | null;
+  photoUrl?: string | null;
+  houseId?: string | null;
+  privacyLevel: PrivacyLevel;
+}
+
+export interface ClassMembershipDTO {
+  id: string;
+  userId: string;\r\n  userName?: string;
+  classId: string;
+  joinedAt?: string;
+}
+
+export interface BranchMembershipDTO {
+  id: string;
+  userId: string;\r\n  userName?: string;
+  branchId: string;
+  status: BranchMembershipStatus;
+  requestedAt?: string;
+  approvedBy?: string | null;
+  approvedAt?: string | null;
+  endedAt?: string | null;
+  note?: string | null;
+  memberName?: string;
+  memberEmail?: string;
+}
+
+export interface BranchDTO extends BranchSummary {}
+
+export interface RoleAssignmentDTO {
+  id: string;
+  userId: string;\r\n  userName?: string;
+  roleId?: string;
+  roleCode?: string;
+  scopeType: 'global' | 'branch' | 'class';
+  scopeId?: string | null;
+  startDate?: string;
+  endDate?: string | null;
+}
+
+
+export interface RoleDTO {
+  id: string;
+  code: string;
+  name: string;
+  scope: 'global' | 'branch' | 'class';
+}
+
+export interface DuesSchemeDTO {
+  id: string;
+  title: string;
+  amount: number;
+  currency: string;
+  frequency: 'monthly' | 'quarterly' | 'annual' | 'one_off';
+  scopeType: 'global' | 'branch' | 'class';
+  status: 'active' | 'inactive';
+}
+
+export interface DuesInvoiceDTO {\r\n  id: string;
+  userId: string;\r\n  userName?: string;
+  amount: number;
+  currency: string;
+  status: 'unpaid' | 'part_paid' | 'paid';
+  periodStart?: string;
+  scheme?: { id: string; title: string };
+  paidAmount?: number;
+  balance?: number;
+}
+
+export interface PaymentApplicationDTO {
+  invoiceId: string;
+  amount: number;
+}
+
+export interface PaymentDTO {
+  id: string;
+  payerUserId: string;
+  amount: number;
+  currency: string;
+  channel: string;
+  reference?: string;
+  scopeType?: 'global' | 'branch' | 'class';
+  scopeId?: string | null;
+  notes?: string;
+  status: 'pending' | 'completed';
+  paidAt?: string;
+  applications: PaymentApplicationDTO[];
+}
+
+export interface WelfareCaseDTO {
+  id: string;
+  title: string;
+  description: string;
+  scopeType: 'global' | 'branch' | 'class';
+  scopeId?: string;
+  targetAmount: number;
+  currency: string;
+}
+
+export interface AuthResponse {
+  user: UserDTO;
+  token: string;
+}
+
+export interface DashboardSummaryDTO {
+  user: UserDTO | null;
+  classMembership: ClassMembershipDTO | null;
+  branchMemberships: BranchMembershipDTO[];
+  outstandingInvoices: DuesInvoiceDTO[];
+  branches: BranchDTO[];
+  welfareCases: WelfareCaseDTO[];
+}
+
+export interface BranchExecutiveBranchDTO extends BranchDTO {
+  pendingRequests: BranchMembershipDTO[];
+}
+
+export interface BranchExecutiveSummaryDTO {
+  branches: BranchExecutiveBranchDTO[];
+}
+
+
+\r\nexport interface FinanceAdminSummaryDTO {\r\n  invoices: DuesInvoiceDTO[];\r\n  payments: PaymentDTO[];\r\n}\r\n

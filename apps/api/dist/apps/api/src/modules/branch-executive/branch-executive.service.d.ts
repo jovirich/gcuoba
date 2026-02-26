@@ -1,0 +1,30 @@
+import type { BranchExecutiveSummaryDTO, BranchMembershipDTO } from '@gcuoba/types';
+import { Model } from 'mongoose';
+import { Branch } from '../branches/schemas/branch.schema';
+import { BranchMembership } from '../memberships/schemas/branch-membership.schema';
+import { RoleAssignmentsService } from '../role-assignments/role-assignments.service';
+import { MembershipsService } from '../memberships/memberships.service';
+import { UsersService } from '../users/users.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { Role } from '../roles/schemas/role.schema';
+import { RoleAssignment } from '../role-assignments/schemas/role-assignment.schema';
+import { RecordHandoverDto } from './dto/record-handover.dto';
+export declare class BranchExecutiveService {
+    private readonly roleAssignmentsService;
+    private readonly membershipsService;
+    private readonly branchModel;
+    private readonly branchMembershipModel;
+    private readonly roleModel;
+    private readonly roleAssignmentModel;
+    private readonly usersService;
+    private readonly notificationsService;
+    private readonly auditLogsService;
+    constructor(roleAssignmentsService: RoleAssignmentsService, membershipsService: MembershipsService, branchModel: Model<Branch>, branchMembershipModel: Model<BranchMembership>, roleModel: Model<Role>, roleAssignmentModel: Model<RoleAssignment>, usersService: UsersService, notificationsService: NotificationsService, auditLogsService: AuditLogsService);
+    getSummary(userId: string): Promise<BranchExecutiveSummaryDTO>;
+    approveMembership(actorId: string, membershipId: string, note?: string): Promise<BranchMembershipDTO>;
+    recordHandover(actorId: string, dto: RecordHandoverDto): Promise<void>;
+    rejectMembership(actorId: string, membershipId: string, note: string): Promise<BranchMembershipDTO>;
+    private ensureBranchAccess;
+    private toDto;
+}

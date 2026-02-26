@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "lib": [
+      "ES2022"
+    ],
+    "strict": true,
+    "baseUrl": "./",
+    "paths": {
+      "@types/*": [
+        "packages/types/src/*"
+      ],
+      "@ui/*": [
+        "packages/ui/src/*"
+      ],
+      "@gcuoba/types": [
+        "packages/types/src"
+      ],
+      "@gcuoba/ui": [
+        "packages/ui/src"
+      ]
+    }
+  }
+}
