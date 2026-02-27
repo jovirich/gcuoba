@@ -6,6 +6,7 @@ import { buildAppUrl } from './api';
 type SessionUser = UserDTO & { token: string };
 
 export const authOptions: NextAuthOptions = {
+  secret: process.env.NEXTAUTH_SECRET || process.env.JWT_SECRET,
   providers: [
     Credentials({
       name: 'Credentials',
