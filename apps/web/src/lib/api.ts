@@ -45,7 +45,25 @@ export function buildApiUrl(path: string) {
 
 export function resolveAppBaseUrl() {
   if (typeof window === 'undefined') {
-    return process.env.NEXTAUTH_URL || process.env.NEXT_PUBLIC_APP_URL || DEFAULT_APP_URL;
+    const nextAuthUrl = process.env.NEXTAUTH_URL;
+    if (nextAuthUrl) {
+      return normalizeBase(nextAuthUrl);
+    }
+
+    const publicAppUrl = process.env.NEXT_PUBLIC_APP_URL;
+    if (publicAppUrl) {
+      return normalizeBase(publicAppUrl);
+    }
+
+    const vercelUrl = process.env.VERCEL_URL;
+    if (vercelUrl) {
+      const withProtocol = vercelUrl.startsWith('http://') || vercelUrl.startsWith('https://')
+        ? vercelUrl
+        : `https://${vercelUrl}`;
+      return normalizeBase(withProtocol);
+    }
+
+    return DEFAULT_APP_URL;
   }
   return '';
 }
