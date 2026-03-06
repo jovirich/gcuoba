@@ -49,15 +49,6 @@ export declare const ExpenseSchema: import("mongoose").Schema<Expense, import("m
     }, "id"> & {
         id: string;
     }> | undefined;
-    status?: import("mongoose").SchemaDefinitionProperty<"pending" | "approved" | "rejected", Expense, Document<unknown, {}, Expense, {
-        id: string;
-    }, import("mongoose").DefaultSchemaOptions> & Omit<Expense & Required<{
-        _id: Types.ObjectId;
-    }> & {
-        __v: number;
-    }, "id"> & {
-        id: string;
-    }> | undefined;
     description?: import("mongoose").SchemaDefinitionProperty<string | null | undefined, Expense, Document<unknown, {}, Expense, {
         id: string;
     }, import("mongoose").DefaultSchemaOptions> & Omit<Expense & Required<{
@@ -67,25 +58,7 @@ export declare const ExpenseSchema: import("mongoose").Schema<Expense, import("m
     }, "id"> & {
         id: string;
     }> | undefined;
-    scope_type?: import("mongoose").SchemaDefinitionProperty<"global" | "branch" | "class", Expense, Document<unknown, {}, Expense, {
-        id: string;
-    }, import("mongoose").DefaultSchemaOptions> & Omit<Expense & Required<{
-        _id: Types.ObjectId;
-    }> & {
-        __v: number;
-    }, "id"> & {
-        id: string;
-    }> | undefined;
-    scope_id?: import("mongoose").SchemaDefinitionProperty<string | null | undefined, Expense, Document<unknown, {}, Expense, {
-        id: string;
-    }, import("mongoose").DefaultSchemaOptions> & Omit<Expense & Required<{
-        _id: Types.ObjectId;
-    }> & {
-        __v: number;
-    }, "id"> & {
-        id: string;
-    }> | undefined;
-    project_id?: import("mongoose").SchemaDefinitionProperty<Types.ObjectId | null | undefined, Expense, Document<unknown, {}, Expense, {
+    status?: import("mongoose").SchemaDefinitionProperty<"pending" | "approved" | "rejected", Expense, Document<unknown, {}, Expense, {
         id: string;
     }, import("mongoose").DefaultSchemaOptions> & Omit<Expense & Required<{
         _id: Types.ObjectId;
@@ -122,6 +95,33 @@ export declare const ExpenseSchema: import("mongoose").Schema<Expense, import("m
         id: string;
     }> | undefined;
     currency?: import("mongoose").SchemaDefinitionProperty<string, Expense, Document<unknown, {}, Expense, {
+        id: string;
+    }, import("mongoose").DefaultSchemaOptions> & Omit<Expense & Required<{
+        _id: Types.ObjectId;
+    }> & {
+        __v: number;
+    }, "id"> & {
+        id: string;
+    }> | undefined;
+    scope_type?: import("mongoose").SchemaDefinitionProperty<"global" | "branch" | "class", Expense, Document<unknown, {}, Expense, {
+        id: string;
+    }, import("mongoose").DefaultSchemaOptions> & Omit<Expense & Required<{
+        _id: Types.ObjectId;
+    }> & {
+        __v: number;
+    }, "id"> & {
+        id: string;
+    }> | undefined;
+    scope_id?: import("mongoose").SchemaDefinitionProperty<string | null | undefined, Expense, Document<unknown, {}, Expense, {
+        id: string;
+    }, import("mongoose").DefaultSchemaOptions> & Omit<Expense & Required<{
+        _id: Types.ObjectId;
+    }> & {
+        __v: number;
+    }, "id"> & {
+        id: string;
+    }> | undefined;
+    project_id?: import("mongoose").SchemaDefinitionProperty<Types.ObjectId | null | undefined, Expense, Document<unknown, {}, Expense, {
         id: string;
     }, import("mongoose").DefaultSchemaOptions> & Omit<Expense & Required<{
         _id: Types.ObjectId;

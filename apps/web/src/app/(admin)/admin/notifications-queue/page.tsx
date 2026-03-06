@@ -6,7 +6,7 @@ import type {
 import { getServerSession } from 'next-auth';
 import { redirect } from 'next/navigation';
 import { authOptions } from '@/lib/auth-options';
-import { fetchJson } from '@/lib/api';
+import { fetchJson, isApiErrorStatus } from '@/lib/api';
 import { NotificationsQueuePanel } from './panel';
 
 export default async function NotificationsQueuePage() {
@@ -20,17 +20,27 @@ export default async function NotificationsQueuePage() {
     redirect('/profile?pending=1');
   }
 
-  const [stats, jobs, workerStatus] = await Promise.all([
-    fetchJson<NotificationEmailQueueStatsDTO>('/notifications/admin/email-queue/stats', {
-      token: user.token,
-    }),
-    fetchJson<NotificationEmailJobDTO[]>('/notifications/admin/email-queue?limit=100', {
-      token: user.token,
-    }),
-    fetchJson<NotificationEmailWorkerStatusDTO>('/notifications/admin/email-queue/worker-status', {
-      token: user.token,
-    }),
-  ]);
+  let stats: NotificationEmailQueueStatsDTO;
+  let jobs: NotificationEmailJobDTO[];
+  let workerStatus: NotificationEmailWorkerStatusDTO;
+  try {
+    [stats, jobs, workerStatus] = await Promise.all([
+      fetchJson<NotificationEmailQueueStatsDTO>('/notifications/admin/email-queue/stats', {
+        token: user.token,
+      }),
+      fetchJson<NotificationEmailJobDTO[]>('/notifications/admin/email-queue?limit=100', {
+        token: user.token,
+      }),
+      fetchJson<NotificationEmailWorkerStatusDTO>('/notifications/admin/email-queue/worker-status', {
+        token: user.token,
+      }),
+    ]);
+  } catch (error) {
+    if (isApiErrorStatus(error, 403)) {
+      redirect('/admin');
+    }
+    throw error;
+  }
 
   return (
     <div className="admin-page">

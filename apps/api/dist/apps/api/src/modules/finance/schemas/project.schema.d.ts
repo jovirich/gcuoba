@@ -30,7 +30,7 @@ export declare const ProjectSchema: import("mongoose").Schema<Project, import("m
 }, "id"> & {
     id: string;
 }, {
-    name?: import("mongoose").SchemaDefinitionProperty<string, Project, Document<unknown, {}, Project, {
+    _id?: import("mongoose").SchemaDefinitionProperty<import("mongoose").Types.ObjectId, Project, Document<unknown, {}, Project, {
         id: string;
     }, import("mongoose").DefaultSchemaOptions> & Omit<Project & Required<{
         _id: import("mongoose").Types.ObjectId;
@@ -39,7 +39,7 @@ export declare const ProjectSchema: import("mongoose").Schema<Project, import("m
     }, "id"> & {
         id: string;
     }> | undefined;
-    budget?: import("mongoose").SchemaDefinitionProperty<number | null | undefined, Project, Document<unknown, {}, Project, {
+    name?: import("mongoose").SchemaDefinitionProperty<string, Project, Document<unknown, {}, Project, {
         id: string;
     }, import("mongoose").DefaultSchemaOptions> & Omit<Project & Required<{
         _id: import("mongoose").Types.ObjectId;
@@ -57,7 +57,7 @@ export declare const ProjectSchema: import("mongoose").Schema<Project, import("m
     }, "id"> & {
         id: string;
     }> | undefined;
-    _id?: import("mongoose").SchemaDefinitionProperty<import("mongoose").Types.ObjectId, Project, Document<unknown, {}, Project, {
+    budget?: import("mongoose").SchemaDefinitionProperty<number | null | undefined, Project, Document<unknown, {}, Project, {
         id: string;
     }, import("mongoose").DefaultSchemaOptions> & Omit<Project & Required<{
         _id: import("mongoose").Types.ObjectId;

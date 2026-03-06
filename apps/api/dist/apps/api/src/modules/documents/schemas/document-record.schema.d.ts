@@ -38,7 +38,7 @@ export declare const DocumentRecordSchema: import("mongoose").Schema<DocumentRec
     }, "id"> & {
         id: string;
     }> | undefined;
-    scopeType?: import("mongoose").SchemaDefinitionProperty<"global" | "branch" | "class" | "private", DocumentRecord, Document<unknown, {}, DocumentRecord, {
+    scopeType?: import("mongoose").SchemaDefinitionProperty<"private" | "global" | "branch" | "class", DocumentRecord, Document<unknown, {}, DocumentRecord, {
         id: string;
     }, import("mongoose").DefaultSchemaOptions> & Omit<DocumentRecord & Required<{
         _id: import("mongoose").Types.ObjectId;
@@ -48,6 +48,15 @@ export declare const DocumentRecordSchema: import("mongoose").Schema<DocumentRec
         id: string;
     }> | undefined;
     scopeId?: import("mongoose").SchemaDefinitionProperty<string | null | undefined, DocumentRecord, Document<unknown, {}, DocumentRecord, {
+        id: string;
+    }, import("mongoose").DefaultSchemaOptions> & Omit<DocumentRecord & Required<{
+        _id: import("mongoose").Types.ObjectId;
+    }> & {
+        __v: number;
+    }, "id"> & {
+        id: string;
+    }> | undefined;
+    visibility?: import("mongoose").SchemaDefinitionProperty<"public" | "private" | "scope", DocumentRecord, Document<unknown, {}, DocumentRecord, {
         id: string;
     }, import("mongoose").DefaultSchemaOptions> & Omit<DocumentRecord & Required<{
         _id: import("mongoose").Types.ObjectId;
@@ -102,15 +111,6 @@ export declare const DocumentRecordSchema: import("mongoose").Schema<DocumentRec
         id: string;
     }> | undefined;
     sizeBytes?: import("mongoose").SchemaDefinitionProperty<number, DocumentRecord, Document<unknown, {}, DocumentRecord, {
-        id: string;
-    }, import("mongoose").DefaultSchemaOptions> & Omit<DocumentRecord & Required<{
-        _id: import("mongoose").Types.ObjectId;
-    }> & {
-        __v: number;
-    }, "id"> & {
-        id: string;
-    }> | undefined;
-    visibility?: import("mongoose").SchemaDefinitionProperty<"private" | "public" | "scope", DocumentRecord, Document<unknown, {}, DocumentRecord, {
         id: string;
     }, import("mongoose").DefaultSchemaOptions> & Omit<DocumentRecord & Required<{
         _id: import("mongoose").Types.ObjectId;

@@ -9,6 +9,7 @@ import type {
     UserDTO,
 } from "@gcuoba/types";
 import { fetchJson } from "@/lib/api";
+import { PaginationControls } from "@/components/ui/pagination-controls";
 
 type ScopeType = "global" | "branch" | "class";
 
@@ -43,6 +44,9 @@ export function RoleAssignmentsPanel({
     const [error, setError] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState(false);
     const [assignmentState, setAssignmentState] = useState(assignments);
+    const [query, setQuery] = useState("");
+    const [page, setPage] = useState(1);
+    const [pageSize, setPageSize] = useState(20);
 
     const rolesByScope = useMemo(() => {
         const grouped: Record<ScopeType, RoleDTO[]> = {
@@ -164,9 +168,39 @@ export function RoleAssignmentsPanel({
         }
     };
 
-    const recentAssignments = assignmentState.slice(0, 10);
+    const filteredAssignments = useMemo(() => {
+        const normalizedQuery = query.trim().toLowerCase();
+        if (!normalizedQuery) {
+            return assignmentState;
+        }
+        return assignmentState.filter((assignment) => {
+            const member = memberMap.get(assignment.userId);
+            const role = roleMap.get(assignment.roleCode ?? "");
+            const scope =
+                assignment.scopeType === "global"
+                    ? "Global"
+                    : assignment.scopeType === "branch"
+                        ? branchMap.get(assignment.scopeId ?? "") ?? "Branch"
+                        : assignment.scopeType === "class"
+                            ? classMap.get(assignment.scopeId ?? "") ?? "Class"
+                            : assignment.scopeType;
+            return (
+                (member?.name ?? "").toLowerCase().includes(normalizedQuery) ||
+                (member?.email ?? "").toLowerCase().includes(normalizedQuery) ||
+                (role?.name ?? assignment.roleCode ?? "").toLowerCase().includes(normalizedQuery) ||
+                scope.toLowerCase().includes(normalizedQuery)
+            );
+        });
+    }, [assignmentState, branchMap, classMap, memberMap, query, roleMap]);
 
-    const formatScope = (item: RoleAssignmentDTO) => {
+    const totalPages = Math.max(1, Math.ceil(filteredAssignments.length / pageSize));
+    const currentPage = Math.min(Math.max(page, 1), totalPages);
+    const pagedAssignments = useMemo(() => {
+        const start = (currentPage - 1) * pageSize;
+        return filteredAssignments.slice(start, start + pageSize);
+    }, [currentPage, filteredAssignments, pageSize]);
+
+    function formatScope(item: RoleAssignmentDTO) {
         if (item.scopeType === "global") {
             return "Global";
         }
@@ -177,7 +211,7 @@ export function RoleAssignmentsPanel({
             return classMap.get(item.scopeId ?? "") ?? "Class";
         }
         return item.scopeType;
-    };
+    }
 
     return (
         <section className="surface-card p-6 shadow-sm space-y-6">
@@ -282,11 +316,23 @@ export function RoleAssignmentsPanel({
                 <div className="flex items-center justify-between">
                     <p className="text-sm font-semibold text-slate-700">Recent assignments</p>
                     <p className="text-xs text-slate-500">
-                        Showing {recentAssignments.length} of {assignmentState.length}
+                        Showing {filteredAssignments.length} of {assignmentState.length}
                     </p>
                 </div>
+                <label className="text-xs text-slate-500">
+                    Search
+                    <input
+                        className="field-input mt-1 text-sm"
+                        placeholder="Search member, email, role, or scope"
+                        value={query}
+                        onChange={(event) => {
+                            setQuery(event.target.value);
+                            setPage(1);
+                        }}
+                    />
+                </label>
 
-                {recentAssignments.length === 0 ? (
+                {filteredAssignments.length === 0 ? (
                     <p className="text-sm text-slate-500">No assignments yet.</p>
                 ) : (
                     <div className="table-wrap">
@@ -300,7 +346,7 @@ export function RoleAssignmentsPanel({
                                 </tr>
                             </thead>
                             <tbody>
-                                {recentAssignments.map((assignment) => {
+                                {pagedAssignments.map((assignment) => {
                                     const member = memberMap.get(assignment.userId);
                                     const role = roleMap.get(assignment.roleCode ?? "");
                                     return (
@@ -327,6 +373,16 @@ export function RoleAssignmentsPanel({
                         </table>
                     </div>
                 )}
+                <PaginationControls
+                    page={currentPage}
+                    pageSize={pageSize}
+                    total={filteredAssignments.length}
+                    onPageChange={setPage}
+                    onPageSizeChange={(value) => {
+                        setPageSize(value);
+                        setPage(1);
+                    }}
+                />
             </div>
         </section>
     );

@@ -2,7 +2,7 @@ import type { WelfareCaseDTO, WelfareCaseDetailDTO } from '@gcuoba/types';
 import { getServerSession } from 'next-auth';
 import { redirect } from 'next/navigation';
 import { authOptions } from '@/lib/auth-options';
-import { fetchJson } from '@/lib/api';
+import { fetchJson, isApiErrorStatus } from '@/lib/api';
 import { buildScopeParams, resolveScopeSelection } from '@/lib/scope-query';
 import { WelfarePanel } from './panel';
 
@@ -41,8 +41,17 @@ export default async function WelfareAdminPage({ searchParams }: WelfareAdminPag
     scopeId: params?.scopeId,
   });
 
-  const cases = await loadCases(user.token, scope.scopeType, scope.scopeId);
-  const initialCase = cases.length ? await loadCase(cases[0].id, user.token) : null;
+  let cases: WelfareCaseDTO[];
+  let initialCase: WelfareCaseDetailDTO | null;
+  try {
+    cases = await loadCases(user.token, scope.scopeType, scope.scopeId);
+    initialCase = cases.length ? await loadCase(cases[0].id, user.token) : null;
+  } catch (error) {
+    if (isApiErrorStatus(error, 403)) {
+      redirect('/admin');
+    }
+    throw error;
+  }
 
   return (
     <div className="admin-page">

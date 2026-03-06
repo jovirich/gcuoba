@@ -9,6 +9,7 @@ import type {
 } from '@gcuoba/types';
 import { API_BASE_URL, fetchJson } from '@/lib/api';
 import { useMemo, useState } from 'react';
+import { PaginationControls } from '@/components/ui/pagination-controls';
 
 type DocumentsPanelProps = {
   authToken: string;
@@ -111,6 +112,10 @@ export function DocumentsPanel({
   }
 
   async function handleDelete(documentId: string) {
+    const proceed = window.confirm('Delete this document?');
+    if (!proceed) {
+      return;
+    }
     setDeletingId(documentId);
     setError(null);
     setMessage(null);
@@ -341,13 +346,57 @@ function DocumentTable({
   onDelete?: (doc: DocumentRecordDTO) => void;
   deletingId?: string | null;
 }) {
-  if (rows.length === 0) {
+  const [query, setQuery] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+
+  const filteredRows = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) {
+      return rows;
+    }
+    return rows.filter((doc) => {
+      const scope = doc.scopeId ? `${doc.scopeType}:${doc.scopeId}` : doc.scopeType;
+      return (
+        doc.originalName.toLowerCase().includes(normalizedQuery) ||
+        scope.toLowerCase().includes(normalizedQuery) ||
+        doc.visibility.toLowerCase().includes(normalizedQuery)
+      );
+    });
+  }, [query, rows]);
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const currentPage = Math.min(Math.max(page, 1), totalPages);
+
+  const pagedRows = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredRows.slice(start, start + pageSize);
+  }, [currentPage, filteredRows, pageSize]);
+
+  if (filteredRows.length === 0) {
     return <p className="mt-3 text-sm text-slate-500">No documents found.</p>;
   }
 
   return (
-    <div className="table-wrap">
-      <table className="table-base">
+    <div className="space-y-3">
+      <div className="grid gap-3 md:grid-cols-2">
+        <label className="text-xs text-slate-500">
+          Search
+          <input
+            className="field-input text-sm"
+            placeholder="Search by name, scope, or visibility"
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setPage(1);
+            }}
+          />
+        </label>
+        <p className="text-xs text-slate-500 md:pt-6">
+          {filteredRows.length} record(s)
+        </p>
+      </div>
+      <div className="table-wrap">
+        <table className="table-base">
         <thead className="text-xs uppercase text-slate-500">
           <tr>
             <th className="py-2">Name</th>
@@ -359,7 +408,7 @@ function DocumentTable({
           </tr>
         </thead>
         <tbody>
-          {rows.map((doc) => (
+          {pagedRows.map((doc) => (
             <tr key={doc.id} className="table-row">
               <td className="py-2">{doc.originalName}</td>
               <td className="py-2">
@@ -394,6 +443,17 @@ function DocumentTable({
           ))}
         </tbody>
       </table>
+      </div>
+      <PaginationControls
+        page={currentPage}
+        pageSize={pageSize}
+        total={filteredRows.length}
+        onPageChange={setPage}
+        onPageSizeChange={(value) => {
+          setPageSize(value);
+          setPage(1);
+        }}
+      />
     </div>
   );
 }

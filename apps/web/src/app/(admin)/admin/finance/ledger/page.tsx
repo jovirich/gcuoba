@@ -1,9 +1,9 @@
-import type { AdminMemberDTO, ClassSetDTO, UserDTO } from '@gcuoba/types';
+import type { AdminMemberDTO, ClassSetDTO, FinanceReportScopeAccessDTO, UserDTO } from '@gcuoba/types';
 import { getServerSession } from 'next-auth';
 import { redirect } from 'next/navigation';
 import { authOptions } from '@/lib/auth-options';
-import { fetchJson } from '@/lib/api';
-import { resolveScopeSelection } from '@/lib/scope-query';
+import { fetchJson, isApiErrorStatus } from '@/lib/api';
+import { resolveScopeSelection, withScope } from '@/lib/scope-query';
 import { LedgerPanel } from './panel';
 
 type FinanceLedgerPageProps = {
@@ -28,15 +28,42 @@ export default async function FinanceLedgerPage({ searchParams }: FinanceLedgerP
   });
   const scopedMembersPath = buildScopedPath('/admin/members', scope.scopeType, scope.scopeId);
 
-  const [members, classes] = await Promise.all([
-    fetchJson<AdminMemberDTO[]>(scopedMembersPath, { token: sessionUser.token }),
-    fetchJson<ClassSetDTO[]>('/classes', { token: sessionUser.token }),
-  ]);
+  const classesPath =
+    scope.scopeType === 'branch'
+      ? '/classes?managedOnly=1'
+      : withScope('/classes', { scopeType: scope.scopeType, scopeId: scope.scopeId });
+
+  let members: AdminMemberDTO[];
+  let classes: ClassSetDTO[];
+  let scopeAccess: FinanceReportScopeAccessDTO | null;
+  try {
+    [members, classes, scopeAccess] = await Promise.all([
+      fetchJson<AdminMemberDTO[]>(scopedMembersPath, { token: sessionUser.token }),
+      fetchJson<ClassSetDTO[]>(classesPath, { token: sessionUser.token }),
+      fetchJson<FinanceReportScopeAccessDTO>('/finance/reports/scopes', { token: sessionUser.token }).catch(
+        () => null,
+      ),
+    ]);
+  } catch (error) {
+    if (isApiErrorStatus(error, 403)) {
+      redirect('/admin');
+    }
+    throw error;
+  }
   const users: UserDTO[] = members.map((member) => member.user);
-  const visibleClasses =
-    scope.scopeType === 'class' && scope.scopeId
-      ? classes.filter((entry) => entry.id === scope.scopeId)
-      : classes;
+  const visibleClasses = (() => {
+    if (scope.scopeType === 'branch') {
+      return [] as ClassSetDTO[];
+    }
+    if (scope.scopeType === 'class' && scope.scopeId) {
+      return classes.filter((entry) => entry.id === scope.scopeId);
+    }
+    if (!scopeAccess || scopeAccess.hasGlobalAccess) {
+      return classes;
+    }
+    const allowed = new Set(scopeAccess.classes.map((entry) => entry.id));
+    return classes.filter((entry) => allowed.has(entry.id));
+  })();
 
   return (
     <div className="admin-page">
@@ -53,6 +80,7 @@ export default async function FinanceLedgerPage({ searchParams }: FinanceLedgerP
         authToken={sessionUser.token}
         activeScopeType={scope.scopeType}
         activeScopeId={scope.scopeId ?? null}
+        showClassLedger={scope.scopeType !== 'branch'}
       />
     </div>
   );

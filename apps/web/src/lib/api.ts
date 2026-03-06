@@ -43,6 +43,26 @@ export function buildApiUrl(path: string) {
   return `${resolveApiBaseUrl()}${normalizePath(path)}`;
 }
 
+function buildInternalApiUrl(path: string) {
+  if (typeof window === 'undefined') {
+    return `${resolveAppBaseUrl()}${DEFAULT_API_PREFIX}${normalizePath(path)}`;
+  }
+  return `${DEFAULT_API_PREFIX}${normalizePath(path)}`;
+}
+
+async function fetchWithFallback(path: string, init: RequestInit) {
+  const primaryUrl = buildApiUrl(path);
+  try {
+    return await fetch(primaryUrl, init);
+  } catch (error) {
+    const fallbackUrl = buildInternalApiUrl(path);
+    if (fallbackUrl === primaryUrl) {
+      throw error;
+    }
+    return await fetch(fallbackUrl, init);
+  }
+}
+
 export function resolveAppBaseUrl() {
   if (typeof window === 'undefined') {
     const nextAuthUrl = process.env.NEXTAUTH_URL;
@@ -80,7 +100,7 @@ export async function fetchJson<T>(path: string, init: ApiRequestInit = {}): Pro
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  const response = await fetch(buildApiUrl(path), {
+  const response = await fetchWithFallback(path, {
     ...rest,
     headers,
     cache: 'no-store',
@@ -97,6 +117,10 @@ export async function fetchJson<T>(path: string, init: ApiRequestInit = {}): Pro
   }
 
   return JSON.parse(bodyText) as T;
+}
+
+export function isApiErrorStatus(error: unknown, statusCode: number): boolean {
+  return error instanceof Error && error.message.startsWith(`API ${statusCode}:`);
 }
 
 export async function fetchAppJson<T>(path: string, init: ApiRequestInit = {}): Promise<T> {

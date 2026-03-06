@@ -19,6 +19,7 @@ export interface UserDTO {
     name: string;
     email: string;
     phone?: string | null;
+    alumniNumber?: string | null;
     status: MemberStatus;
 }
 export interface ProfileDTO {
@@ -96,6 +97,20 @@ export interface EventDTO {
     startAt?: string;
     endAt?: string;
     status?: 'draft' | 'published' | 'cancelled';
+    attendeeCount?: number;
+    contributionTotal?: number;
+    myRsvp?: 'none' | 'interested' | 'attending' | 'not_attending';
+    myContributionAmount?: number;
+}
+export interface EventParticipationDTO {
+    id: string;
+    eventId: string;
+    userId: string;
+    status: 'interested' | 'attending' | 'not_attending';
+    contributionAmount: number;
+    contributionCurrency: string;
+    contributionNote?: string | null;
+    contributedAt?: string | null;
 }
 export interface LedgerTotalsDTO {
     billed: number;
@@ -162,6 +177,7 @@ export interface DuesSchemeDTO {
     amount: number;
     currency: string;
     frequency: 'monthly' | 'quarterly' | 'annual' | 'one_off';
+    oneOffYear?: number | null;
     scopeType: 'global' | 'branch' | 'class';
     scopeId?: string | null;
     status: 'active' | 'inactive';
@@ -170,6 +186,7 @@ export interface DuesInvoiceDTO {
     id: string;
     userId: string;
     userName?: string;
+    userAlumniNumber?: string | null;
     amount: number;
     currency: string;
     status: 'unpaid' | 'part_paid' | 'paid';
@@ -188,6 +205,8 @@ export interface PaymentApplicationDTO {
 export interface PaymentDTO {
     id: string;
     payerUserId: string;
+    payerName?: string;
+    payerAlumniNumber?: string | null;
     amount: number;
     currency: string;
     channel: string;
@@ -282,19 +301,41 @@ export interface WelfarePayoutDTO {
     caseId: string;
     beneficiaryUserId?: string;
     amount: number;
+    grossAmount?: number;
+    totalDeductions?: number;
+    netAmount?: number;
     currency: string;
     channel: string;
     reference?: string;
     notes?: string;
+    deductions?: WelfarePayoutDeductionDTO[];
     disbursedAt?: string;
     status: 'pending' | 'approved' | 'rejected';
     reviewedBy?: string | null;
     reviewedAt?: string | null;
     reviewNote?: string | null;
 }
+export interface WelfarePayoutDeductionDTO {
+    type: 'standard_percentage' | 'dues_invoice' | 'liability' | 'custom';
+    label: string;
+    amount: number;
+    percentage?: number | null;
+    invoiceId?: string | null;
+}
+export interface WelfareOutstandingInvoiceDTO {
+    id: string;
+    title: string;
+    amount: number;
+    paidAmount: number;
+    balance: number;
+    currency: string;
+    status: 'unpaid' | 'part_paid' | 'paid';
+    periodStart?: string;
+}
 export interface WelfareCaseDetailDTO extends WelfareCaseDTO {
     contributions: WelfareContributionDTO[];
     payouts: WelfarePayoutDTO[];
+    beneficiaryOutstandingInvoices?: WelfareOutstandingInvoiceDTO[];
 }
 export interface WelfareCategoryDTO {
     id: string;
@@ -456,6 +497,7 @@ export interface FinanceReportFiltersDTO {
 export interface FinanceReportRowDTO {
     userId: string;
     userName?: string;
+    userAlumniNumber?: string | null;
     currency: string;
     invoices: number;
     payments: number;
@@ -478,6 +520,38 @@ export interface FinanceReportScopeAccessDTO {
     hasGlobalAccess: boolean;
     branches: BranchDTO[];
     classes: ClassSetDTO[];
+}
+export type DuesBroadsheetStatus = 'clear' | 'owing_current' | 'outstanding_prior';
+export interface DuesBroadsheetRowDTO {
+    userId: string;
+    memberName: string;
+    alumniNumber?: string | null;
+    joinedAt?: string | null;
+    currentYearDues: number;
+    paidSoFar: number;
+    currentYearBalance: number;
+    priorOutstanding: number;
+    balanceOwing: number;
+    currency: string;
+    status: DuesBroadsheetStatus;
+}
+export interface DuesBroadsheetTotalsDTO {
+    members: number;
+    currentYearDues: number;
+    paidSoFar: number;
+    currentYearBalance: number;
+    priorOutstanding: number;
+    balanceOwing: number;
+}
+export interface DuesBroadsheetDTO {
+    scopeType: 'global' | 'branch' | 'class';
+    scopeId?: string | null;
+    year: number;
+    currency: string;
+    query?: string;
+    status?: DuesBroadsheetStatus;
+    rows: DuesBroadsheetRowDTO[];
+    totals: DuesBroadsheetTotalsDTO;
 }
 export interface FinanceReportSnapshotDTO {
     id: string;

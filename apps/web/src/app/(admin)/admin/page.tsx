@@ -40,6 +40,11 @@ export default async function AdminHomePage({ searchParams }: AdminHomePageProps
         hidden: false,
       },
       {
+        href: withScope('/admin/dues', scope),
+        label: 'View dues broadsheet',
+        hidden: false,
+      },
+      {
         href: withScope('/admin/projects', scope),
         label: 'Manage project budgets and delivery',
         hidden: false,

@@ -36,6 +36,24 @@ export declare const AuditLogSchema: import("mongoose").Schema<AuditLog, import(
     }, "id"> & {
         id: string;
     }> | undefined;
+    scopeType?: import("mongoose").SchemaDefinitionProperty<"private" | "global" | "branch" | "class" | null | undefined, AuditLog, Document<unknown, {}, AuditLog, {
+        id: string;
+    }, import("mongoose").DefaultSchemaOptions> & Omit<AuditLog & Required<{
+        _id: import("mongoose").Types.ObjectId;
+    }> & {
+        __v: number;
+    }, "id"> & {
+        id: string;
+    }> | undefined;
+    scopeId?: import("mongoose").SchemaDefinitionProperty<string | null | undefined, AuditLog, Document<unknown, {}, AuditLog, {
+        id: string;
+    }, import("mongoose").DefaultSchemaOptions> & Omit<AuditLog & Required<{
+        _id: import("mongoose").Types.ObjectId;
+    }> & {
+        __v: number;
+    }, "id"> & {
+        id: string;
+    }> | undefined;
     actorUserId?: import("mongoose").SchemaDefinitionProperty<string, AuditLog, Document<unknown, {}, AuditLog, {
         id: string;
     }, import("mongoose").DefaultSchemaOptions> & Omit<AuditLog & Required<{
@@ -64,24 +82,6 @@ export declare const AuditLogSchema: import("mongoose").Schema<AuditLog, import(
         id: string;
     }> | undefined;
     resourceId?: import("mongoose").SchemaDefinitionProperty<string | null | undefined, AuditLog, Document<unknown, {}, AuditLog, {
-        id: string;
-    }, import("mongoose").DefaultSchemaOptions> & Omit<AuditLog & Required<{
-        _id: import("mongoose").Types.ObjectId;
-    }> & {
-        __v: number;
-    }, "id"> & {
-        id: string;
-    }> | undefined;
-    scopeType?: import("mongoose").SchemaDefinitionProperty<"global" | "branch" | "class" | "private" | null | undefined, AuditLog, Document<unknown, {}, AuditLog, {
-        id: string;
-    }, import("mongoose").DefaultSchemaOptions> & Omit<AuditLog & Required<{
-        _id: import("mongoose").Types.ObjectId;
-    }> & {
-        __v: number;
-    }, "id"> & {
-        id: string;
-    }> | undefined;
-    scopeId?: import("mongoose").SchemaDefinitionProperty<string | null | undefined, AuditLog, Document<unknown, {}, AuditLog, {
         id: string;
     }, import("mongoose").DefaultSchemaOptions> & Omit<AuditLog & Required<{
         _id: import("mongoose").Types.ObjectId;

@@ -2,7 +2,8 @@
 
 import type { NotificationDTO } from '@gcuoba/types';
 import { fetchJson } from '@/lib/api';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { PaginationControls } from '@/components/ui/pagination-controls';
 
 type NotificationsPanelProps = {
   initialNotifications: NotificationDTO[];
@@ -11,6 +12,10 @@ type NotificationsPanelProps = {
 
 export function NotificationsPanel({ initialNotifications, authToken }: NotificationsPanelProps) {
   const [notifications, setNotifications] = useState<NotificationDTO[]>(initialNotifications);
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<'all' | 'unread' | 'read'>('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -20,6 +25,41 @@ export function NotificationsPanel({ initialNotifications, authToken }: Notifica
     () => notifications.filter((notification) => !notification.read).length,
     [notifications],
   );
+
+  const filteredNotifications = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    return notifications.filter((notification) => {
+      if (filter === 'read' && !notification.read) {
+        return false;
+      }
+      if (filter === 'unread' && notification.read) {
+        return false;
+      }
+      if (!normalizedQuery) {
+        return true;
+      }
+      return (
+        notification.title.toLowerCase().includes(normalizedQuery) ||
+        notification.message.toLowerCase().includes(normalizedQuery)
+      );
+    });
+  }, [filter, notifications, query]);
+
+  const pagedNotifications = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredNotifications.slice(start, start + pageSize);
+  }, [filteredNotifications, page, pageSize]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query, filter]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(filteredNotifications.length / pageSize));
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [filteredNotifications.length, page, pageSize]);
 
   async function reload() {
     setLoading(true);
@@ -117,11 +157,37 @@ export function NotificationsPanel({ initialNotifications, authToken }: Notifica
             </button>
           </div>
         </div>
-        {notifications.length === 0 ? (
+        <div className="mt-3 grid gap-3 md:grid-cols-3">
+          <label className="text-xs text-slate-500">
+            Search
+            <input
+              className="field-input text-sm"
+              placeholder="Search notifications"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </label>
+          <label className="text-xs text-slate-500">
+            Filter
+            <select
+              className="field-input text-sm"
+              value={filter}
+              onChange={(event) => setFilter(event.target.value as 'all' | 'unread' | 'read')}
+            >
+              <option value="all">All</option>
+              <option value="unread">Unread</option>
+              <option value="read">Read</option>
+            </select>
+          </label>
+          <div className="text-xs text-slate-500 md:pt-6">
+            {filteredNotifications.length} record(s)
+          </div>
+        </div>
+        {filteredNotifications.length === 0 ? (
           <p className="mt-3 text-sm text-slate-500">No notifications yet.</p>
         ) : (
           <ul className="mt-3 space-y-2">
-            {notifications.map((notification) => (
+            {pagedNotifications.map((notification) => (
               <li
                 key={notification.id}
                 className={`rounded-xl border p-3 ${
@@ -151,6 +217,16 @@ export function NotificationsPanel({ initialNotifications, authToken }: Notifica
             ))}
           </ul>
         )}
+        <PaginationControls
+          page={page}
+          pageSize={pageSize}
+          total={filteredNotifications.length}
+          onPageChange={setPage}
+          onPageSizeChange={(value) => {
+            setPageSize(value);
+            setPage(1);
+          }}
+        />
       </section>
     </section>
   );

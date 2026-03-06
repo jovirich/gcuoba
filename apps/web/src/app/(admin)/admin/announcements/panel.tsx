@@ -3,6 +3,7 @@
 import type { AnnouncementDTO, BranchDTO, ClassSetDTO } from '@gcuoba/types';
 import { useEffect, useMemo, useState } from 'react';
 import { fetchJson } from '@/lib/api';
+import { PaginationControls } from '@/components/ui/pagination-controls';
 
 type AnnouncementsPanelProps = {
   initialAnnouncements: AnnouncementDTO[];
@@ -39,6 +40,11 @@ export function AnnouncementsPanel({
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'draft' | 'published'>('all');
+  const [scopeFilter, setScopeFilter] = useState<'all' | 'global' | 'branch' | 'class'>('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const isScopeLocked = Boolean(activeScopeType);
 
   const effectiveScopeType = activeScopeType ?? formState.scopeType;
@@ -77,6 +83,41 @@ export function AnnouncementsPanel({
     return [];
   }, [activeScopeId, activeScopeType, branches, classes, effectiveScopeType]);
 
+  const filteredAnnouncements = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    return announcements.filter((entry) => {
+      if (statusFilter !== 'all' && entry.status !== statusFilter) {
+        return false;
+      }
+      if (scopeFilter !== 'all' && entry.scopeType !== scopeFilter) {
+        return false;
+      }
+      if (!normalizedQuery) {
+        return true;
+      }
+      return (
+        entry.title.toLowerCase().includes(normalizedQuery) ||
+        entry.body.toLowerCase().includes(normalizedQuery)
+      );
+    });
+  }, [announcements, query, scopeFilter, statusFilter]);
+
+  const pagedAnnouncements = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredAnnouncements.slice(start, start + pageSize);
+  }, [filteredAnnouncements, page, pageSize]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query, scopeFilter, statusFilter]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(filteredAnnouncements.length / pageSize));
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [filteredAnnouncements.length, page, pageSize]);
+
   async function handleCreate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
@@ -113,6 +154,13 @@ export function AnnouncementsPanel({
   }
 
   async function handleStatusChange(id: string, nextStatus: 'draft' | 'published') {
+    const prompt =
+      nextStatus === 'published'
+        ? 'Publish this announcement now?'
+        : 'Move this announcement back to draft?';
+    if (!window.confirm(prompt)) {
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -252,13 +300,49 @@ export function AnnouncementsPanel({
       <div className="rounded-2xl border border-slate-200">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
           <h3 className="text-sm font-semibold text-slate-900">Existing announcements</h3>
-          <span className="text-xs text-slate-500">{announcements.length} record(s)</span>
+          <span className="text-xs text-slate-500">{filteredAnnouncements.length} record(s)</span>
         </div>
-        {announcements.length === 0 ? (
+        <div className="grid gap-3 border-b border-slate-100 px-4 py-3 md:grid-cols-3">
+          <label className="text-xs text-slate-500">
+            Search
+            <input
+              className="field-input text-sm"
+              placeholder="Search title or body"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </label>
+          <label className="text-xs text-slate-500">
+            Status
+            <select
+              className="field-input text-sm"
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value as 'all' | 'draft' | 'published')}
+            >
+              <option value="all">All</option>
+              <option value="draft">Draft</option>
+              <option value="published">Published</option>
+            </select>
+          </label>
+          <label className="text-xs text-slate-500">
+            Scope
+            <select
+              className="field-input text-sm"
+              value={scopeFilter}
+              onChange={(event) => setScopeFilter(event.target.value as 'all' | 'global' | 'branch' | 'class')}
+            >
+              <option value="all">All</option>
+              <option value="global">Global</option>
+              <option value="branch">Branch</option>
+              <option value="class">Class</option>
+            </select>
+          </label>
+        </div>
+        {filteredAnnouncements.length === 0 ? (
           <p className="p-4 text-sm text-slate-500">No announcements created yet.</p>
         ) : (
           <ul className="divide-y divide-slate-100">
-            {announcements.map((entry) => (
+            {pagedAnnouncements.map((entry) => (
               <li key={entry.id} className="flex flex-col gap-2 px-4 py-3 md:flex-row md:items-center md:justify-between">
                 <div>
                   <p className="text-sm font-semibold text-slate-900">{entry.title}</p>
@@ -298,6 +382,18 @@ export function AnnouncementsPanel({
             ))}
           </ul>
         )}
+        <div className="px-4 pb-4">
+          <PaginationControls
+            page={page}
+            pageSize={pageSize}
+            total={filteredAnnouncements.length}
+            onPageChange={setPage}
+            onPageSizeChange={(value) => {
+              setPageSize(value);
+              setPage(1);
+            }}
+          />
+        </div>
       </div>
     </section>
   );

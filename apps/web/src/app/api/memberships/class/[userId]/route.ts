@@ -4,6 +4,8 @@ import { connectMongo } from '@/lib/server/mongo';
 import { toClassMembershipDto } from '@/lib/server/dto-mappers';
 import { ClassMembershipModel } from '@/lib/server/models';
 import { ensureSelfAccess, requireAuthTokenUser } from '@/lib/server/request-auth';
+import { assignAlumniNumberForClassMembership } from '@/lib/server/alumni-number';
+import { ensureCurrentYearDuesInvoices } from '@/lib/server/finance';
 
 export const runtime = 'nodejs';
 
@@ -48,6 +50,9 @@ export const PUT = (request: Request, context: Context) =>
     if (!membership) {
       throw new ApiError(500, 'Unable to update class membership', 'InternalServerError');
     }
+
+    await assignAlumniNumberForClassMembership(userId, classId);
+    await ensureCurrentYearDuesInvoices({ userId, scopeType: 'class', scopeId: classId });
 
     return Response.json(toClassMembershipDto(membership));
   });

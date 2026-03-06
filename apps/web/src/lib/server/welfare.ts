@@ -3,6 +3,8 @@ import type {
   WelfareCaseDetailDTO,
   WelfareCategoryDTO,
   WelfareContributionDTO,
+  WelfareOutstandingInvoiceDTO,
+  WelfarePayoutDeductionDTO,
   WelfarePayoutDTO,
   WelfareQueueItemDTO,
 } from '@gcuoba/types';
@@ -15,11 +17,15 @@ import {
   BranchModel,
   ClassMembershipModel,
   ClassModel,
+  DuesInvoiceModel,
+  PaymentModel,
   UserModel,
   WelfareCaseModel,
   WelfareCategoryModel,
   WelfareContributionModel,
   WelfarePayoutModel,
+  type DuesInvoiceDoc,
+  type DuesSchemeDoc,
   type WelfareCaseDoc,
   type WelfareContributionDoc,
   type WelfarePayoutDoc,
@@ -28,6 +34,20 @@ import { createNotificationForUser } from './notifications';
 
 type WelfareScopeType = 'global' | 'branch' | 'class';
 type WelfareQueueStatus = 'pending' | 'approved' | 'rejected';
+type WelfarePayoutDeductionType = 'standard_percentage' | 'dues_invoice' | 'liability' | 'custom';
+type NormalizedPayoutDeduction = {
+  type: WelfarePayoutDeductionType;
+  label: string;
+  amount: number;
+  percentage?: number | null;
+  invoiceId?: string | null;
+};
+type ResolvedPayoutInput = {
+  grossAmount: number;
+  netAmount: number;
+  totalDeductions: number;
+  deductions: NormalizedPayoutDeduction[];
+};
 
 function toCategory(doc: {
   _id: Types.ObjectId;
@@ -82,15 +102,31 @@ function toContribution(doc: WelfareContributionDoc): WelfareContributionDTO {
 }
 
 function toPayout(doc: WelfarePayoutDoc): WelfarePayoutDTO {
+  const grossAmount = Number(doc.grossAmount ?? doc.amount ?? 0);
+  const totalDeductions = Number(doc.totalDeductions ?? Math.max(grossAmount - Number(doc.amount ?? 0), 0));
+  const netAmount = Number(doc.amount ?? 0);
+  const deductions: WelfarePayoutDeductionDTO[] = (doc.deductions ?? [])
+    .map((row) => ({
+      type: row.type as WelfarePayoutDeductionType,
+      label: row.label,
+      amount: Number(row.amount ?? 0),
+      percentage: row.percentage ?? null,
+      invoiceId: row.invoiceId ? row.invoiceId.toString() : null,
+    }))
+    .filter((row) => row.amount > 0);
   return {
     id: doc._id.toString(),
     caseId: doc.caseId,
     beneficiaryUserId: doc.beneficiaryUserId ?? undefined,
-    amount: doc.amount,
+    amount: netAmount,
+    grossAmount: Number(grossAmount.toFixed(2)),
+    totalDeductions: Number(totalDeductions.toFixed(2)),
+    netAmount: Number(netAmount.toFixed(2)),
     currency: doc.currency ?? 'NGN',
     channel: doc.channel,
     reference: doc.reference ?? undefined,
     notes: doc.notes ?? undefined,
+    deductions,
     disbursedAt: doc.disbursedAt?.toISOString(),
     status: doc.status ?? 'pending',
     reviewedBy: doc.reviewedBy ?? null,
@@ -224,6 +260,45 @@ async function ensureCaseManagement(actorId: string, welfareCase: WelfareCaseDoc
   await ensureScopeManagement(actorId, welfareCase.scopeType, welfareCase.scopeId ?? null);
 }
 
+async function ensureBeneficiaryInScope(
+  beneficiaryUserId: string,
+  scopeType: WelfareScopeType,
+  scopeId: string | null,
+) {
+  if (scopeType === 'global') {
+    return;
+  }
+  if (!scopeId) {
+    throw new ApiError(400, `scopeId is required for ${scopeType} scope`, 'BadRequest');
+  }
+
+  if (scopeType === 'branch') {
+    const membership = await BranchMembershipModel.findOne({
+      userId: beneficiaryUserId,
+      branchId: scopeId,
+      status: 'approved',
+    })
+      .select('_id')
+      .lean<{ _id: Types.ObjectId }>()
+      .exec();
+    if (!membership) {
+      throw new ApiError(400, 'Beneficiary must be an approved member of the selected branch', 'BadRequest');
+    }
+    return;
+  }
+
+  const membership = await ClassMembershipModel.findOne({
+    userId: beneficiaryUserId,
+    classId: scopeId,
+  })
+    .select('_id')
+    .lean<{ _id: Types.ObjectId }>()
+    .exec();
+  if (!membership) {
+    throw new ApiError(400, 'Beneficiary must belong to the selected class', 'BadRequest');
+  }
+}
+
 async function refreshCaseTotals(caseId: string) {
   const [caseRecord, approvedContributions, approvedPayouts] = await Promise.all([
     WelfareCaseModel.findById(caseId).exec(),
@@ -261,6 +336,275 @@ async function refreshCaseTotals(caseId: string) {
 function createdAtIso(row: WelfareContributionDoc | WelfarePayoutDoc): string | undefined {
   const createdAt = (row as (WelfareContributionDoc | WelfarePayoutDoc) & { createdAt?: Date }).createdAt;
   return createdAt?.toISOString();
+}
+
+function toOutstandingInvoice(doc: DuesInvoiceDoc, schemeTitle?: string): WelfareOutstandingInvoiceDTO {
+  const amount = Number(doc.amount ?? 0);
+  const paidAmount = Number(doc.paidAmount ?? 0);
+  const balance = Number(Math.max(amount - paidAmount, 0).toFixed(2));
+  return {
+    id: doc._id.toString(),
+    title: schemeTitle ?? 'Dues invoice',
+    amount: Number(amount.toFixed(2)),
+    paidAmount: Number(paidAmount.toFixed(2)),
+    balance,
+    currency: doc.currency ?? 'NGN',
+    status: doc.status ?? 'unpaid',
+    periodStart: doc.periodStart?.toISOString(),
+  };
+}
+
+function assertInvoiceMatchesScope(
+  welfareCase: WelfareCaseDoc,
+  scheme: DuesSchemeDoc | null,
+  invoiceId: string,
+): void {
+  if (!scheme) {
+    throw new ApiError(400, `Unable to resolve dues scheme for invoice ${invoiceId}`, 'BadRequest');
+  }
+  if (welfareCase.scopeType === 'global') {
+    return;
+  }
+  const caseScopeId = welfareCase.scopeId ?? null;
+  if (scheme.scope_type !== welfareCase.scopeType || (scheme.scope_id ?? null) !== caseScopeId) {
+    throw new ApiError(400, `Invoice ${invoiceId} is outside welfare scope`, 'BadRequest');
+  }
+}
+
+async function resolvePayoutInput(
+  welfareCase: WelfareCaseDoc,
+  payload: {
+    amount?: number;
+    retainerMode?: 'none' | 'percentage' | 'fixed';
+    retainerPercentage?: number;
+    retainerAmount?: number;
+    deductions?: Array<{
+      type?: WelfarePayoutDeductionType;
+      label?: string;
+      amount?: number;
+      percentage?: number;
+      invoiceId?: string;
+    }>;
+  },
+): Promise<ResolvedPayoutInput> {
+  const grossAmount = Number(payload.amount ?? 0);
+  if (!Number.isFinite(grossAmount) || grossAmount <= 0) {
+    throw new ApiError(400, 'amount must be greater than 0', 'BadRequest');
+  }
+
+  const deductions: NormalizedPayoutDeduction[] = [];
+  const retainerMode = payload.retainerMode ?? 'none';
+  if (retainerMode !== 'none' && retainerMode !== 'percentage' && retainerMode !== 'fixed') {
+    throw new ApiError(400, 'Invalid retainerMode', 'BadRequest');
+  }
+  if (retainerMode === 'percentage') {
+    const percent = Number(payload.retainerPercentage ?? 0);
+    if (!Number.isFinite(percent) || percent <= 0 || percent > 100) {
+      throw new ApiError(400, 'retainerPercentage must be between 0 and 100', 'BadRequest');
+    }
+    const amount = Number(((grossAmount * percent) / 100).toFixed(2));
+    if (amount > 0) {
+      deductions.push({
+        type: 'standard_percentage',
+        label: `Retainer fee (${percent}%)`,
+        amount,
+        percentage: percent,
+        invoiceId: null,
+      });
+    }
+  } else if (retainerMode === 'fixed') {
+    const amount = Number(payload.retainerAmount ?? 0);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new ApiError(400, 'retainerAmount must be greater than 0', 'BadRequest');
+    }
+    if (amount >= grossAmount) {
+      throw new ApiError(400, 'retainerAmount must be less than payout amount', 'BadRequest');
+    }
+    deductions.push({
+      type: 'custom',
+      label: 'Retainer fee',
+      amount: Number(amount.toFixed(2)),
+      percentage: null,
+      invoiceId: null,
+    });
+  }
+
+  const requested = payload.deductions ?? [];
+  const duesDeductionTotals = new Map<string, number>();
+  const seenDuesInvoiceIds = new Set<string>();
+  for (const row of requested) {
+    const amount = Number(row.amount ?? 0);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new ApiError(400, 'All deductions must have an amount greater than 0', 'BadRequest');
+    }
+    const type: WelfarePayoutDeductionType =
+      row.type === 'dues_invoice' || row.type === 'liability' || row.type === 'standard_percentage'
+        ? row.type
+        : 'custom';
+    const label = row.label?.trim() || (type === 'dues_invoice' ? 'Dues deduction' : 'Liability deduction');
+    const invoiceId = row.invoiceId?.trim() || null;
+
+    if (type === 'dues_invoice') {
+      if (!invoiceId || !Types.ObjectId.isValid(invoiceId)) {
+        throw new ApiError(400, 'Dues deductions require a valid invoiceId', 'BadRequest');
+      }
+      if (seenDuesInvoiceIds.has(invoiceId)) {
+        throw new ApiError(400, `Duplicate dues deduction invoice selected: ${invoiceId}`, 'BadRequest');
+      }
+      seenDuesInvoiceIds.add(invoiceId);
+      if (!welfareCase.beneficiaryUserId) {
+        throw new ApiError(400, 'Case beneficiary is required for dues deductions', 'BadRequest');
+      }
+      const invoice = await DuesInvoiceModel.findById(invoiceId).populate('schemeId').exec();
+      if (!invoice || invoice.userId !== welfareCase.beneficiaryUserId) {
+        throw new ApiError(400, 'Dues deduction invoice must belong to the case beneficiary', 'BadRequest');
+      }
+      const scheme = invoice.schemeId as DuesSchemeDoc | null;
+      assertInvoiceMatchesScope(welfareCase, scheme, invoiceId);
+      const outstanding = Math.max(Number(invoice.amount ?? 0) - Number(invoice.paidAmount ?? 0), 0);
+      const cumulative = Number(((duesDeductionTotals.get(invoiceId) ?? 0) + amount).toFixed(2));
+      if (cumulative > outstanding + 0.01) {
+        throw new ApiError(400, `Dues deduction exceeds invoice outstanding for ${invoiceId}`, 'BadRequest');
+      }
+      duesDeductionTotals.set(invoiceId, cumulative);
+      if ((invoice.currency ?? 'NGN') !== (welfareCase.currency ?? 'NGN')) {
+        throw new ApiError(400, `Invoice ${invoiceId} currency must match welfare currency`, 'BadRequest');
+      }
+    }
+
+    deductions.push({
+      type,
+      label,
+      amount: Number(amount.toFixed(2)),
+      percentage: row.percentage ?? null,
+      invoiceId,
+    });
+  }
+
+  const totalDeductions = Number(
+    deductions.reduce((sum, row) => sum + Number(row.amount ?? 0), 0).toFixed(2),
+  );
+  const netAmount = Number((grossAmount - totalDeductions).toFixed(2));
+  if (netAmount <= 0) {
+    throw new ApiError(400, 'Net payout must remain greater than 0 after deductions', 'BadRequest');
+  }
+
+  return {
+    grossAmount: Number(grossAmount.toFixed(2)),
+    netAmount,
+    totalDeductions,
+    deductions,
+  };
+}
+
+async function applyPayoutDuesDeductions(
+  actorId: string,
+  welfareCase: WelfareCaseDoc,
+  payout: WelfarePayoutDoc,
+): Promise<void> {
+  const rows = (payout.deductions ?? []).filter((row) => row.type === 'dues_invoice' && row.invoiceId && Number(row.amount ?? 0) > 0);
+  if (rows.length === 0) {
+    return;
+  }
+
+  for (const row of rows) {
+    const invoiceId = row.invoiceId?.toString();
+    if (!invoiceId || !Types.ObjectId.isValid(invoiceId)) {
+      continue;
+    }
+    const invoice = await DuesInvoiceModel.findById(invoiceId).populate('schemeId').exec();
+    if (!invoice) {
+      throw new ApiError(400, `Invoice ${invoiceId} not found during payout approval`, 'BadRequest');
+    }
+    if (invoice.userId !== payout.beneficiaryUserId) {
+      throw new ApiError(400, `Invoice ${invoiceId} does not belong to payout beneficiary`, 'BadRequest');
+    }
+    const scheme = invoice.schemeId as DuesSchemeDoc | null;
+    assertInvoiceMatchesScope(welfareCase, scheme, invoiceId);
+    const outstanding = Math.max(Number(invoice.amount ?? 0) - Number(invoice.paidAmount ?? 0), 0);
+    const applied = Number(row.amount ?? 0);
+    if (applied <= 0) {
+      continue;
+    }
+    if (applied > outstanding + 0.01) {
+      throw new ApiError(400, `Invoice ${invoiceId} outstanding changed; refresh and retry approval`, 'BadRequest');
+    }
+
+    await PaymentModel.create({
+      payerUserId: invoice.userId,
+      amount: Number(applied.toFixed(2)),
+      currency: invoice.currency ?? welfareCase.currency ?? 'NGN',
+      channel: 'welfare_deduction',
+      reference: `WEL-${payout._id.toString()}-${invoice._id.toString()}`,
+      scopeType: scheme?.scope_type ?? welfareCase.scopeType,
+      scopeId: scheme?.scope_id ?? welfareCase.scopeId ?? null,
+      notes: `Applied from welfare payout ${payout._id.toString()}`,
+      status: 'completed',
+      paidAt: payout.disbursedAt ?? new Date(),
+      applications: [{ invoiceId: invoice._id, amount: Number(applied.toFixed(2)) }],
+    });
+
+    invoice.paidAmount = Number((Number(invoice.paidAmount ?? 0) + applied).toFixed(2));
+    if (invoice.paidAmount + 0.01 >= Number(invoice.amount ?? 0)) {
+      invoice.status = 'paid';
+      invoice.paidAmount = Number(invoice.amount ?? 0);
+    } else {
+      invoice.status = 'part_paid';
+    }
+    await invoice.save();
+  }
+
+  await recordAuditLog({
+    actorUserId: actorId,
+    action: 'welfare_payout.dues_deductions_applied',
+    resourceType: 'welfare_payout',
+    resourceId: payout._id.toString(),
+    scopeType: welfareCase.scopeType,
+    scopeId: welfareCase.scopeId ?? null,
+    metadata: {
+      caseId: welfareCase._id.toString(),
+      deductions: rows.map((row) => ({
+        invoiceId: row.invoiceId?.toString(),
+        amount: Number(row.amount ?? 0),
+      })),
+    },
+  });
+}
+
+async function listBeneficiaryOutstandingInvoices(
+  welfareCase: WelfareCaseDoc,
+): Promise<WelfareOutstandingInvoiceDTO[]> {
+  const beneficiaryUserId = welfareCase.beneficiaryUserId;
+  if (!beneficiaryUserId) {
+    return [];
+  }
+
+  const docs = await DuesInvoiceModel.find({
+    userId: beneficiaryUserId,
+    status: { $in: ['unpaid', 'part_paid'] },
+  })
+    .populate('schemeId')
+    .sort({ periodStart: 1, createdAt: 1 })
+    .exec();
+
+  const filtered = docs.filter((doc) => {
+    const scheme = doc.schemeId as DuesSchemeDoc | null;
+    if (!scheme) {
+      return false;
+    }
+    if ((doc.currency ?? 'NGN') !== (welfareCase.currency ?? 'NGN')) {
+      return false;
+    }
+    if (welfareCase.scopeType === 'global') {
+      return true;
+    }
+    return scheme.scope_type === welfareCase.scopeType && (scheme.scope_id ?? null) === (welfareCase.scopeId ?? null);
+  });
+
+  return filtered.map((doc) => {
+    const scheme = doc.schemeId as DuesSchemeDoc | null;
+    return toOutstandingInvoice(doc, scheme?.title);
+  });
 }
 
 export async function listWelfareCategories(
@@ -440,12 +784,21 @@ export async function createWelfareCase(
   }
 
   const beneficiaryUserId = payload.beneficiaryUserId?.trim() || null;
-  if (beneficiaryUserId) {
-    const user = await UserModel.exists({ _id: beneficiaryUserId });
-    if (!user) {
-      throw new ApiError(400, 'Beneficiary user not found', 'BadRequest');
-    }
+  if (!beneficiaryUserId) {
+    throw new ApiError(400, 'Beneficiary member is required', 'BadRequest');
   }
+
+  const beneficiaryUser = await UserModel.findById(beneficiaryUserId)
+    .select('name status')
+    .lean<{ name?: string; status?: string }>()
+    .exec();
+  if (!beneficiaryUser?.name) {
+    throw new ApiError(400, 'Beneficiary member not found', 'BadRequest');
+  }
+  if (beneficiaryUser.status !== 'active') {
+    throw new ApiError(400, 'Beneficiary member must be active', 'BadRequest');
+  }
+  await ensureBeneficiaryInScope(beneficiaryUserId, scopeType, scopeId);
 
   const record = await WelfareCaseModel.create({
     title,
@@ -455,7 +808,7 @@ export async function createWelfareCase(
     scopeId: scopeType === 'global' ? null : scopeId,
     targetAmount: payload.targetAmount ?? 0,
     currency: payload.currency?.trim().toUpperCase() || 'NGN',
-    beneficiaryName: payload.beneficiaryName?.trim() || null,
+    beneficiaryName: beneficiaryUser.name,
     beneficiaryUserId,
     status: 'open',
     totalRaised: 0,
@@ -531,15 +884,17 @@ export async function getWelfareCaseDetail(actorId: string, caseId: string): Pro
   }
   await ensureCanViewCase(actorId, welfareCase);
 
-  const [contributions, payouts] = await Promise.all([
+  const [contributions, payouts, outstandingInvoices] = await Promise.all([
     WelfareContributionModel.find({ caseId }).sort({ paidAt: -1, createdAt: -1 }).exec(),
     WelfarePayoutModel.find({ caseId }).sort({ disbursedAt: -1, createdAt: -1 }).exec(),
+    listBeneficiaryOutstandingInvoices(welfareCase),
   ]);
 
   return {
     ...toCase(welfareCase),
     contributions: contributions.map((doc) => toContribution(doc)),
     payouts: payouts.map((doc) => toPayout(doc)),
+    beneficiaryOutstandingInvoices: outstandingInvoices,
   };
 }
 
@@ -618,6 +973,16 @@ export async function recordWelfarePayout(
     channel?: string;
     reference?: string;
     notes?: string;
+    retainerMode?: 'none' | 'percentage' | 'fixed';
+    retainerPercentage?: number;
+    retainerAmount?: number;
+    deductions?: Array<{
+      type?: WelfarePayoutDeductionType;
+      label?: string;
+      amount?: number;
+      percentage?: number;
+      invoiceId?: string;
+    }>;
   },
 ): Promise<WelfarePayoutDTO> {
   if (!Types.ObjectId.isValid(caseId)) {
@@ -632,10 +997,11 @@ export async function recordWelfarePayout(
   }
   await ensureCaseManagement(actorId, welfareCase);
 
-  const amount = Number(payload.amount ?? 0);
-  if (!Number.isFinite(amount) || amount <= 0) {
-    throw new ApiError(400, 'amount must be greater than 0', 'BadRequest');
+  const payoutCurrency = payload.currency?.trim().toUpperCase() || welfareCase.currency || 'NGN';
+  if (payoutCurrency !== (welfareCase.currency ?? 'NGN')) {
+    throw new ApiError(400, 'Payout currency must match welfare case currency', 'BadRequest');
   }
+  const payoutInput = await resolvePayoutInput(welfareCase, payload);
   const channel = payload.channel?.trim();
   if (!channel) {
     throw new ApiError(400, 'channel is required', 'BadRequest');
@@ -644,12 +1010,21 @@ export async function recordWelfarePayout(
   const payout = await WelfarePayoutModel.create({
     caseId,
     beneficiaryUserId: welfareCase.beneficiaryUserId ?? null,
-    amount,
-    currency: payload.currency?.trim().toUpperCase() || welfareCase.currency || 'NGN',
+    amount: payoutInput.netAmount,
+    grossAmount: payoutInput.grossAmount,
+    totalDeductions: payoutInput.totalDeductions,
+    currency: payoutCurrency,
     channel,
     reference: payload.reference?.trim() || null,
     notes: payload.notes?.trim() || null,
-    disbursedAt: new Date(),
+    deductions: payoutInput.deductions.map((row) => ({
+      type: row.type,
+      label: row.label,
+      amount: row.amount,
+      percentage: row.percentage ?? null,
+      invoiceId: row.invoiceId && Types.ObjectId.isValid(row.invoiceId) ? new Types.ObjectId(row.invoiceId) : null,
+    })),
+    disbursedAt: null,
     status: 'pending',
     reviewedBy: null,
     reviewedAt: null,
@@ -666,6 +1041,8 @@ export async function recordWelfarePayout(
     metadata: {
       caseId,
       amount: payout.amount,
+      grossAmount: payout.grossAmount ?? payout.amount,
+      totalDeductions: payout.totalDeductions ?? 0,
       currency: payout.currency ?? 'NGN',
       beneficiaryUserId: payout.beneficiaryUserId ?? null,
     },
@@ -912,6 +1289,9 @@ export async function approveWelfarePayout(
     throw new ApiError(404, 'Case not found', 'NotFound');
   }
   await ensureCaseManagement(actorId, welfareCase);
+  if (payout.status !== 'pending') {
+    throw new ApiError(400, 'Only pending payouts can be approved', 'BadRequest');
+  }
 
   payout.status = 'approved';
   payout.reviewedBy = actorId;
@@ -920,6 +1300,7 @@ export async function approveWelfarePayout(
   if (!payout.disbursedAt) {
     payout.disbursedAt = new Date();
   }
+  await applyPayoutDuesDeductions(actorId, welfareCase, payout);
   await payout.save();
   await refreshCaseTotals(welfareCase._id.toString());
 
@@ -972,6 +1353,9 @@ export async function rejectWelfarePayout(
     throw new ApiError(404, 'Case not found', 'NotFound');
   }
   await ensureCaseManagement(actorId, welfareCase);
+  if (payout.status !== 'pending') {
+    throw new ApiError(400, 'Only pending payouts can be rejected', 'BadRequest');
+  }
 
   payout.status = 'rejected';
   payout.reviewedBy = actorId;

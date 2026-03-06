@@ -3,12 +3,16 @@
 import type {
   BranchDTO,
   ClassSetDTO,
+  UserDTO,
   WelfareCaseDTO,
   WelfareCaseDetailDTO,
   WelfareCategoryDTO,
+  WelfareOutstandingInvoiceDTO,
   WelfareQueueItemDTO,
 } from '@gcuoba/types';
 import { fetchJson } from '@/lib/api';
+import { PaginationControls } from '@/components/ui/pagination-controls';
+import { buildScopeParams } from '@/lib/scope-query';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
@@ -27,8 +31,8 @@ type CaseState = {
 };
 
 type ContributionFormState = {
-  contributorName: string;
-  contributorEmail: string;
+  contributorUserId: string;
+  contributorQuery: string;
   amount: string;
   notes: string;
 };
@@ -38,6 +42,17 @@ type PayoutFormState = {
   channel: string;
   reference: string;
   notes: string;
+  retainerMode: 'none' | 'percentage' | 'fixed';
+  retainerPercentage: string;
+  retainerAmount: string;
+};
+
+type PayoutDeductionFormState = {
+  id: string;
+  type: 'dues_invoice' | 'liability' | 'custom';
+  label: string;
+  amount: string;
+  invoiceId: string;
 };
 
 type CreateCaseFormState = {
@@ -48,11 +63,11 @@ type CreateCaseFormState = {
   scopeId: string;
   targetAmount: string;
   currency: string;
-  beneficiaryName: string;
   beneficiaryUserId: string;
 };
 
 type CaseStatus = 'open' | 'closed';
+type WelfareTab = 'create' | 'manage';
 
 export function WelfarePanel({
   cases,
@@ -70,8 +85,8 @@ export function WelfarePanel({
   });
   const hasSkippedInitialCaseFetch = useRef(false);
   const [contributionForm, setContributionForm] = useState<ContributionFormState>({
-    contributorName: '',
-    contributorEmail: '',
+    contributorUserId: '',
+    contributorQuery: '',
     amount: '',
     notes: '',
   });
@@ -80,6 +95,18 @@ export function WelfarePanel({
     channel: 'transfer',
     reference: '',
     notes: '',
+    retainerMode: 'none',
+    retainerPercentage: '',
+    retainerAmount: '',
+  });
+  const [payoutDeductions, setPayoutDeductions] = useState<PayoutDeductionFormState[]>([]);
+  const [pendingDuesDeduction, setPendingDuesDeduction] = useState<{ invoiceId: string; amount: string }>({
+    invoiceId: '',
+    amount: '',
+  });
+  const [pendingLiabilityDeduction, setPendingLiabilityDeduction] = useState<{ label: string; amount: string }>({
+    label: '',
+    amount: '',
   });
   const [caseForm, setCaseForm] = useState<CreateCaseFormState>({
     title: '',
@@ -89,19 +116,24 @@ export function WelfarePanel({
     scopeId: '',
     targetAmount: '',
     currency: 'NGN',
-    beneficiaryName: '',
     beneficiaryUserId: '',
   });
   const [categories, setCategories] = useState<WelfareCategoryDTO[]>([]);
   const [branches, setBranches] = useState<BranchDTO[]>([]);
   const [classes, setClasses] = useState<ClassSetDTO[]>([]);
+  const [members, setMembers] = useState<UserDTO[]>([]);
   const [queue, setQueue] = useState<WelfareQueueItemDTO[]>([]);
   const [queueLoading, setQueueLoading] = useState(false);
   const [queueActionId, setQueueActionId] = useState<string | null>(null);
+  const [queueQuery, setQueueQuery] = useState('');
+  const [queueKindFilter, setQueueKindFilter] = useState<'all' | WelfareQueueItemDTO['kind']>('all');
+  const [queuePage, setQueuePage] = useState(1);
+  const [queuePageSize, setQueuePageSize] = useState(10);
   const [submissionStatus, setSubmissionStatus] = useState<string | null>(null);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [creatingCase, setCreatingCase] = useState(false);
   const [caseStatusBusy, setCaseStatusBusy] = useState(false);
+  const [activeTab, setActiveTab] = useState<WelfareTab>('create');
   const isScopeLocked = Boolean(activeScopeType);
   const effectiveScopeType = activeScopeType ?? caseForm.scopeType;
   const effectiveScopeId =
@@ -113,22 +145,57 @@ export function WelfarePanel({
     if (activeScopeType && activeScopeType !== 'global' && activeScopeId) {
       setupCategoryParams.set('scopeId', activeScopeId);
     }
+    const branchPath = (() => {
+      if (activeScopeType === 'branch') {
+        const params = buildScopeParams({ scopeType: 'branch', scopeId: activeScopeId ?? undefined });
+        return `/branches?${params.toString()}`;
+      }
+      if (activeScopeType === 'class') {
+        return '/branches?managedOnly=1';
+      }
+      if (activeScopeType === 'global') {
+        return '/branches?scopeType=global';
+      }
+      return '/branches?managedOnly=1';
+    })();
+    const classesPath = (() => {
+      if (activeScopeType === 'class') {
+        const params = buildScopeParams({ scopeType: 'class', scopeId: activeScopeId ?? undefined });
+        return `/classes?${params.toString()}`;
+      }
+      if (activeScopeType === 'branch') {
+        return '/classes?managedOnly=1';
+      }
+      if (activeScopeType === 'global') {
+        return '/classes?scopeType=global';
+      }
+      return '/classes?managedOnly=1';
+    })();
+    const userScopeParams = buildScopeParams({
+      scopeType: activeScopeType,
+      scopeId: activeScopeId ?? undefined,
+    });
+    const usersPath = userScopeParams.toString() ? `/users?${userScopeParams.toString()}` : '/users';
 
     Promise.all([
-      fetchJson<BranchDTO[]>('/branches', { token: authToken }),
-      fetchJson<ClassSetDTO[]>('/classes', { token: authToken }),
+      fetchJson<BranchDTO[]>(branchPath, { token: authToken }),
+      fetchJson<ClassSetDTO[]>(classesPath, { token: authToken }),
+      fetchJson<UserDTO[]>(usersPath, { token: authToken }),
       fetchJson<WelfareCategoryDTO[]>(`/welfare/categories?${setupCategoryParams.toString()}`, {
         token: authToken,
       }),
     ])
-      .then(([branchesData, classesData, categoriesData]) => {
+      .then(([branchesData, classesData, membersData, categoriesData]) => {
+        const activeMembers = membersData.filter((member) => member.status === 'active');
         setBranches(branchesData);
         setClasses(classesData);
+        setMembers(activeMembers);
         setCategories(categoriesData);
-        if (!caseForm.categoryId) {
+        if (!caseForm.categoryId || !caseForm.beneficiaryUserId) {
           setCaseForm((prev) => ({
             ...prev,
-            categoryId: categoriesData[0]?.id ?? '',
+            categoryId: prev.categoryId || categoriesData[0]?.id || '',
+            beneficiaryUserId: prev.beneficiaryUserId || activeMembers[0]?.id || '',
           }));
         }
       })
@@ -216,6 +283,25 @@ export function WelfarePanel({
 
   const selectedCase = useMemo(() => cases.find((c) => c.id === selectedCaseId) ?? null, [cases, selectedCaseId]);
   const caseForStats = caseState.data ?? selectedCase;
+  const beneficiaryOutstandingInvoices: WelfareOutstandingInvoiceDTO[] = caseState.data?.beneficiaryOutstandingInvoices ?? [];
+  const contributorOptions = useMemo(
+    () =>
+      members.map((member) => ({
+        id: member.id,
+        name: member.name,
+        label: `${member.name} (${member.email})`,
+      })),
+    [members],
+  );
+  const selectedContributorLabel = useMemo(() => {
+    if (!contributionForm.contributorUserId) {
+      return 'None selected';
+    }
+    return (
+      contributorOptions.find((member) => member.id === contributionForm.contributorUserId)?.label ??
+      'None selected'
+    );
+  }, [contributionForm.contributorUserId, contributorOptions]);
 
   const scopeOptions = useMemo(() => {
     if (effectiveScopeType === 'branch') {
@@ -229,6 +315,43 @@ export function WelfarePanel({
     }
     return classes;
   }, [activeScopeId, activeScopeType, branches, classes, effectiveScopeType]);
+
+  const payoutAmountRaw = Number(payoutForm.amount || 0);
+  const payoutAmountNumber = Number.isFinite(payoutAmountRaw) ? payoutAmountRaw : 0;
+  const retainerPercentRaw = Number(payoutForm.retainerPercentage || 0);
+  const retainerPercent = Number.isFinite(retainerPercentRaw) ? retainerPercentRaw : 0;
+  const retainerFixedRaw = Number(payoutForm.retainerAmount || 0);
+  const retainerFixed = Number.isFinite(retainerFixedRaw) ? retainerFixedRaw : 0;
+  const retainerDeductionAmount =
+    payoutForm.retainerMode === 'percentage'
+      ? Number(((payoutAmountNumber * retainerPercent) / 100).toFixed(2))
+      : payoutForm.retainerMode === 'fixed'
+        ? Number(retainerFixed.toFixed(2))
+        : 0;
+  const customDeductionsTotal = Number(
+    payoutDeductions.reduce((sum, row) => sum + Number(row.amount || 0), 0).toFixed(2),
+  );
+  const payoutTotalDeductions = Number((retainerDeductionAmount + customDeductionsTotal).toFixed(2));
+  const payoutNetPreview = Number((Math.max(payoutAmountNumber - payoutTotalDeductions, 0)).toFixed(2));
+  const filteredQueue = useMemo(() => {
+    const query = queueQuery.trim().toLowerCase();
+    return queue.filter((item) => {
+      if (queueKindFilter !== 'all' && item.kind !== queueKindFilter) {
+        return false;
+      }
+      if (!query) {
+        return true;
+      }
+      const haystack = `${item.kind} ${item.caseTitle} ${item.submittedBy ?? ''} ${item.currency}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [queue, queueKindFilter, queueQuery]);
+  const queueTotalPages = Math.max(1, Math.ceil(filteredQueue.length / queuePageSize));
+  const queueCurrentPage = Math.min(queuePage, queueTotalPages);
+  const pagedQueue = useMemo(() => {
+    const start = (queueCurrentPage - 1) * queuePageSize;
+    return filteredQueue.slice(start, start + queuePageSize);
+  }, [filteredQueue, queueCurrentPage, queuePageSize]);
 
   async function loadQueue() {
     setQueueLoading(true);
@@ -270,7 +393,6 @@ export function WelfarePanel({
           scopeId: effectiveScopeType === 'global' ? undefined : effectiveScopeId,
           targetAmount: Number(caseForm.targetAmount || 0),
           currency: caseForm.currency,
-          beneficiaryName: caseForm.beneficiaryName || undefined,
           beneficiaryUserId: caseForm.beneficiaryUserId || undefined,
         }),
         token: authToken,
@@ -287,8 +409,7 @@ export function WelfarePanel({
             : '',
         targetAmount: '',
         currency: 'NGN',
-        beneficiaryName: '',
-        beneficiaryUserId: '',
+        beneficiaryUserId: members[0]?.id ?? '',
       });
       setSubmissionStatus('Welfare case created.');
       router.refresh();
@@ -301,6 +422,13 @@ export function WelfarePanel({
 
   async function handleCaseStatusChange(status: CaseStatus) {
     if (!selectedCaseId) {
+      return;
+    }
+    const isClosing = status === 'closed';
+    const proceed = window.confirm(
+      isClosing ? 'Are you sure you want to close this welfare case?' : 'Are you sure you want to re-open this welfare case?',
+    );
+    if (!proceed) {
       return;
     }
     setCaseStatusBusy(true);
@@ -328,6 +456,13 @@ export function WelfarePanel({
     if (!selectedCaseId) {
       return;
     }
+    const selectedContributor = contributorOptions.find(
+      (member) => member.id === contributionForm.contributorUserId,
+    );
+    if (!selectedContributor) {
+      setSubmissionError('Select a contributor from members.');
+      return;
+    }
     setSubmissionStatus(null);
     setSubmissionError(null);
     try {
@@ -335,14 +470,14 @@ export function WelfarePanel({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contributorName: contributionForm.contributorName,
-          contributorEmail: contributionForm.contributorEmail || undefined,
+          contributorUserId: selectedContributor.id,
+          contributorName: selectedContributor.name,
           amount: Number(contributionForm.amount),
           notes: contributionForm.notes || undefined,
         }),
         token: authToken,
       });
-      setContributionForm({ contributorName: '', contributorEmail: '', amount: '', notes: '' });
+      setContributionForm({ contributorUserId: '', contributorQuery: '', amount: '', notes: '' });
       setSubmissionStatus('Contribution submitted for approval.');
       await refreshCase(selectedCaseId);
       await loadQueue();
@@ -351,9 +486,79 @@ export function WelfarePanel({
     }
   }
 
+  function addDuesDeduction() {
+    const invoiceId = pendingDuesDeduction.invoiceId;
+    const amountNumber = Number(pendingDuesDeduction.amount);
+    const invoice = beneficiaryOutstandingInvoices.find((row) => row.id === invoiceId);
+    if (!invoiceId || !invoice) {
+      setSubmissionError('Select a beneficiary outstanding dues invoice to deduct.');
+      return;
+    }
+    if (!Number.isFinite(amountNumber) || amountNumber <= 0) {
+      setSubmissionError('Enter a valid dues deduction amount.');
+      return;
+    }
+    if (amountNumber > Number(invoice.balance ?? 0) + 0.01) {
+      setSubmissionError('Dues deduction cannot be greater than invoice outstanding balance.');
+      return;
+    }
+    const duplicate = payoutDeductions.some(
+      (row) => row.type === 'dues_invoice' && row.invoiceId === invoiceId,
+    );
+    if (duplicate) {
+      setSubmissionError('This dues invoice is already added to deductions.');
+      return;
+    }
+    setPayoutDeductions((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        type: 'dues_invoice',
+        label: `Dues: ${invoice.title}`,
+        amount: amountNumber.toFixed(2),
+        invoiceId,
+      },
+    ]);
+    setPendingDuesDeduction({ invoiceId: '', amount: '' });
+    setSubmissionError(null);
+  }
+
+  function addLiabilityDeduction() {
+    const label = pendingLiabilityDeduction.label.trim();
+    const amountNumber = Number(pendingLiabilityDeduction.amount);
+    if (!label) {
+      setSubmissionError('Provide a liability/deduction label.');
+      return;
+    }
+    if (!Number.isFinite(amountNumber) || amountNumber <= 0) {
+      setSubmissionError('Enter a valid liability deduction amount.');
+      return;
+    }
+    setPayoutDeductions((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        type: 'liability',
+        label,
+        amount: amountNumber.toFixed(2),
+        invoiceId: '',
+      },
+    ]);
+    setPendingLiabilityDeduction({ label: '', amount: '' });
+    setSubmissionError(null);
+  }
+
+  function removePayoutDeduction(deductionId: string) {
+    setPayoutDeductions((prev) => prev.filter((row) => row.id !== deductionId));
+  }
+
   async function handlePayoutSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedCaseId) {
+      return;
+    }
+    if (payoutNetPreview <= 0) {
+      setSubmissionError('Net payout must be greater than zero after deductions.');
       return;
     }
     setSubmissionStatus(null);
@@ -367,10 +572,32 @@ export function WelfarePanel({
           channel: payoutForm.channel,
           reference: payoutForm.reference || undefined,
           notes: payoutForm.notes || undefined,
+          retainerMode: payoutForm.retainerMode,
+          retainerPercentage:
+            payoutForm.retainerMode === 'percentage' ? Number(payoutForm.retainerPercentage || 0) : undefined,
+          retainerAmount:
+            payoutForm.retainerMode === 'fixed' ? Number(payoutForm.retainerAmount || 0) : undefined,
+          deductions: payoutDeductions.map((row) => ({
+            type: row.type,
+            label: row.label,
+            amount: Number(row.amount),
+            invoiceId: row.type === 'dues_invoice' ? row.invoiceId : undefined,
+          })),
         }),
         token: authToken,
       });
-      setPayoutForm({ amount: '', channel: 'transfer', reference: '', notes: '' });
+      setPayoutForm({
+        amount: '',
+        channel: 'transfer',
+        reference: '',
+        notes: '',
+        retainerMode: 'none',
+        retainerPercentage: '',
+        retainerAmount: '',
+      });
+      setPayoutDeductions([]);
+      setPendingDuesDeduction({ invoiceId: '', amount: '' });
+      setPendingLiabilityDeduction({ label: '', amount: '' });
       setSubmissionStatus('Payout submitted for approval.');
       await refreshCase(selectedCaseId);
       await loadQueue();
@@ -380,6 +607,14 @@ export function WelfarePanel({
   }
 
   async function reviewQueueItem(item: WelfareQueueItemDTO, action: 'approve' | 'reject') {
+    const proceed = window.confirm(
+      action === 'approve'
+        ? `Approve this ${item.kind} request?`
+        : `Reject this ${item.kind} request?`,
+    );
+    if (!proceed) {
+      return;
+    }
     setQueueActionId(item.id);
     setSubmissionError(null);
     setSubmissionStatus(null);
@@ -432,6 +667,26 @@ export function WelfarePanel({
         </div>
       )}
 
+      <section className="surface-card p-3 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className={`btn-pill ${activeTab === 'create' ? 'border-red-200 bg-red-50 text-red-700' : ''}`}
+            onClick={() => setActiveTab('create')}
+          >
+            Create welfare
+          </button>
+          <button
+            type="button"
+            className={`btn-pill ${activeTab === 'manage' ? 'border-red-200 bg-red-50 text-red-700' : ''}`}
+            onClick={() => setActiveTab('manage')}
+          >
+            Manage welfare
+          </button>
+        </div>
+      </section>
+
+      {activeTab === 'create' && (
       <section className="surface-card p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">Create welfare case</h2>
         <form onSubmit={handleCreateCase} className="mt-4 grid gap-4 md:grid-cols-2">
@@ -529,20 +784,20 @@ export function WelfarePanel({
             />
           </label>
           <label className="text-sm text-slate-600">
-            Beneficiary name
-            <input
-              className="field-input"
-              value={caseForm.beneficiaryName}
-              onChange={(event) => setCaseForm((prev) => ({ ...prev, beneficiaryName: event.target.value }))}
-            />
-          </label>
-          <label className="text-sm text-slate-600">
-            Beneficiary user ID
-            <input
+            Beneficiary member
+            <select
+              required
               className="field-input"
               value={caseForm.beneficiaryUserId}
               onChange={(event) => setCaseForm((prev) => ({ ...prev, beneficiaryUserId: event.target.value }))}
-            />
+            >
+              <option value="">Select member</option>
+              {members.map((member) => (
+                <option key={member.id} value={member.id}>
+                  {member.name} ({member.email}){member.alumniNumber ? ` - ${member.alumniNumber}` : ''}
+                </option>
+              ))}
+            </select>
           </label>
           <div className="md:col-span-2">
             <button
@@ -555,7 +810,10 @@ export function WelfarePanel({
           </div>
         </form>
       </section>
+      )}
 
+      {activeTab === 'manage' && (
+      <>
       <section className="surface-card p-6 shadow-sm">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-900">Approval queue</h2>
@@ -568,58 +826,100 @@ export function WelfarePanel({
             Refresh
           </button>
         </div>
-        {queue.length === 0 ? (
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <label className="text-xs text-slate-500">
+            Search queue
+            <input
+              className="field-input text-sm"
+              placeholder="Case, member, or currency"
+              value={queueQuery}
+              onChange={(event) => {
+                setQueueQuery(event.target.value);
+                setQueuePage(1);
+              }}
+            />
+          </label>
+          <label className="text-xs text-slate-500">
+            Type
+            <select
+              className="field-input text-sm"
+              value={queueKindFilter}
+              onChange={(event) => {
+                setQueueKindFilter(event.target.value as typeof queueKindFilter);
+                setQueuePage(1);
+              }}
+            >
+              <option value="all">All</option>
+              <option value="contribution">Contributions</option>
+              <option value="payout">Payouts</option>
+            </select>
+          </label>
+          <p className="text-xs text-slate-500 md:pt-6">{filteredQueue.length} record(s)</p>
+        </div>
+        {filteredQueue.length === 0 ? (
           <p className="mt-3 text-sm text-slate-500">No pending approvals.</p>
         ) : (
-          <div className="table-wrap">
-            <table className="table-base">
-              <thead className="text-xs uppercase text-slate-500">
-                <tr>
-                  <th className="py-2">Type</th>
-                  <th className="py-2">Case</th>
-                  <th className="py-2">Amount</th>
-                  <th className="py-2">Submitted by</th>
-                  <th className="py-2">Submitted at</th>
-                  <th className="py-2">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {queue.map((item) => (
-                  <tr key={`${item.kind}-${item.id}`} className="table-row">
-                    <td className="py-2 capitalize">{item.kind}</td>
-                    <td className="py-2">{item.caseTitle}</td>
-                    <td className="py-2">
-                      {item.amount.toLocaleString()} {item.currency}
-                    </td>
-                    <td className="py-2">{item.submittedBy ?? '-'}</td>
-                    <td className="py-2 text-xs text-slate-500">
-                      {item.submittedAt ? new Date(item.submittedAt).toLocaleString() : '-'}
-                    </td>
-                    <td className="py-2">
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          className="btn-pill border-red-200 bg-red-50 text-red-700"
-                          disabled={queueActionId === item.id}
-                          onClick={() => void reviewQueueItem(item, 'approve')}
-                        >
-                          Approve
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-pill border-rose-200 bg-rose-50 text-rose-700"
-                          disabled={queueActionId === item.id}
-                          onClick={() => void reviewQueueItem(item, 'reject')}
-                        >
-                          Reject
-                        </button>
-                      </div>
-                    </td>
+          <>
+            <div className="table-wrap">
+              <table className="table-base">
+                <thead className="text-xs uppercase text-slate-500">
+                  <tr>
+                    <th className="py-2">Type</th>
+                    <th className="py-2">Case</th>
+                    <th className="py-2">Amount</th>
+                    <th className="py-2">Submitted by</th>
+                    <th className="py-2">Submitted at</th>
+                    <th className="py-2">Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {pagedQueue.map((item) => (
+                    <tr key={`${item.kind}-${item.id}`} className="table-row">
+                      <td className="py-2 capitalize">{item.kind}</td>
+                      <td className="py-2">{item.caseTitle}</td>
+                      <td className="py-2">
+                        {item.amount.toLocaleString()} {item.currency}
+                      </td>
+                      <td className="py-2">{item.submittedBy ?? '-'}</td>
+                      <td className="py-2 text-xs text-slate-500">
+                        {item.submittedAt ? new Date(item.submittedAt).toLocaleString() : '-'}
+                      </td>
+                      <td className="py-2">
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            className="btn-pill border-red-200 bg-red-50 text-red-700"
+                            disabled={queueActionId === item.id}
+                            onClick={() => void reviewQueueItem(item, 'approve')}
+                          >
+                            Approve
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-pill border-rose-200 bg-rose-50 text-rose-700"
+                            disabled={queueActionId === item.id}
+                            onClick={() => void reviewQueueItem(item, 'reject')}
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <PaginationControls
+              page={queueCurrentPage}
+              pageSize={queuePageSize}
+              total={filteredQueue.length}
+              onPageChange={setQueuePage}
+              onPageSizeChange={(value) => {
+                setQueuePageSize(value);
+                setQueuePage(1);
+              }}
+            />
+          </>
         )}
       </section>
 
@@ -679,26 +979,33 @@ export function WelfarePanel({
                 <form onSubmit={handleContributionSubmit} className="space-y-3 surface-muted p-4">
                   <h3 className="text-sm font-semibold text-slate-900">Record contribution</h3>
                   <label className="text-xs text-slate-500">
-                    Contributor name
+                    Contributor member
                     <input
                       required
+                      list="welfare-contributor-members"
                       className="field-input"
-                      value={contributionForm.contributorName}
-                      onChange={(event) =>
-                        setContributionForm((prev) => ({ ...prev, contributorName: event.target.value }))
-                      }
+                      placeholder="Search member by name or email"
+                      value={contributionForm.contributorQuery}
+                      onChange={(event) => {
+                        const selected = contributorOptions.find(
+                          (member) => member.label === event.target.value,
+                        );
+                        setContributionForm((prev) => ({
+                          ...prev,
+                          contributorQuery: event.target.value,
+                          contributorUserId: selected?.id ?? '',
+                        }));
+                      }}
                     />
+                    <datalist id="welfare-contributor-members">
+                      {contributorOptions.map((member) => (
+                        <option key={member.id} value={member.label} />
+                      ))}
+                    </datalist>
                   </label>
                   <label className="text-xs text-slate-500">
-                    Contributor email
-                    <input
-                      type="email"
-                      className="field-input"
-                      value={contributionForm.contributorEmail}
-                      onChange={(event) =>
-                        setContributionForm((prev) => ({ ...prev, contributorEmail: event.target.value }))
-                      }
-                    />
+                    Selected member
+                    <input className="field-input" value={selectedContributorLabel} disabled />
                   </label>
                   <label className="text-xs text-slate-500">
                     Amount ({caseState.data.currency})
@@ -736,7 +1043,7 @@ export function WelfarePanel({
                 <form onSubmit={handlePayoutSubmit} className="space-y-3 surface-muted p-4">
                   <h3 className="text-sm font-semibold text-slate-900">Record payout</h3>
                   <label className="text-xs text-slate-500">
-                    Amount ({caseState.data.currency})
+                    Gross amount ({caseState.data.currency})
                     <input
                       type="number"
                       min="0"
@@ -749,6 +1056,169 @@ export function WelfarePanel({
                       }
                     />
                   </label>
+                  <div className="rounded-xl border border-slate-200 bg-white p-3">
+                    <p className="text-xs font-semibold uppercase text-slate-500">Retainer configuration (optional)</p>
+                    <div className="mt-2 grid gap-2 md:grid-cols-2">
+                      <label className="text-xs text-slate-500">
+                        Mode
+                        <select
+                          className="field-input"
+                          value={payoutForm.retainerMode}
+                          onChange={(event) =>
+                            setPayoutForm((prev) => ({
+                              ...prev,
+                              retainerMode: event.target.value as PayoutFormState['retainerMode'],
+                            }))
+                          }
+                        >
+                          <option value="none">No retainer</option>
+                          <option value="percentage">Percentage</option>
+                          <option value="fixed">Fixed amount</option>
+                        </select>
+                      </label>
+                      {payoutForm.retainerMode === 'percentage' && (
+                        <label className="text-xs text-slate-500">
+                          Retainer percentage (%)
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.01"
+                            className="field-input"
+                            value={payoutForm.retainerPercentage}
+                            onChange={(event) =>
+                              setPayoutForm((prev) => ({ ...prev, retainerPercentage: event.target.value }))
+                            }
+                          />
+                        </label>
+                      )}
+                      {payoutForm.retainerMode === 'fixed' && (
+                        <label className="text-xs text-slate-500">
+                          Retainer amount ({caseState.data.currency})
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            className="field-input"
+                            value={payoutForm.retainerAmount}
+                            onChange={(event) =>
+                              setPayoutForm((prev) => ({ ...prev, retainerAmount: event.target.value }))
+                            }
+                          />
+                        </label>
+                      )}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-white p-3">
+                    <p className="text-xs font-semibold uppercase text-slate-500">Add dues deduction</p>
+                    <div className="mt-2 grid gap-2 md:grid-cols-3">
+                      <select
+                        className="field-input md:col-span-2"
+                        value={pendingDuesDeduction.invoiceId}
+                        onChange={(event) =>
+                          setPendingDuesDeduction((prev) => ({ ...prev, invoiceId: event.target.value }))
+                        }
+                      >
+                        <option value="">Select beneficiary dues invoice</option>
+                        {beneficiaryOutstandingInvoices
+                          .filter(
+                            (invoice) =>
+                              !payoutDeductions.some(
+                                (row) => row.type === 'dues_invoice' && row.invoiceId === invoice.id,
+                              ),
+                          )
+                          .map((invoice) => (
+                          <option key={invoice.id} value={invoice.id}>
+                            {invoice.title} - {invoice.balance.toLocaleString()} {invoice.currency}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        className="field-input"
+                        placeholder="Amount"
+                        value={pendingDuesDeduction.amount}
+                        onChange={(event) =>
+                          setPendingDuesDeduction((prev) => ({ ...prev, amount: event.target.value }))
+                        }
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      className="mt-2 btn-pill"
+                      onClick={addDuesDeduction}
+                    >
+                      Add dues deduction
+                    </button>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-white p-3">
+                    <p className="text-xs font-semibold uppercase text-slate-500">Add liability deduction</p>
+                    <div className="mt-2 grid gap-2 md:grid-cols-3">
+                      <input
+                        className="field-input md:col-span-2"
+                        placeholder="Label (e.g., prior liabilities)"
+                        value={pendingLiabilityDeduction.label}
+                        onChange={(event) =>
+                          setPendingLiabilityDeduction((prev) => ({ ...prev, label: event.target.value }))
+                        }
+                      />
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        className="field-input"
+                        placeholder="Amount"
+                        value={pendingLiabilityDeduction.amount}
+                        onChange={(event) =>
+                          setPendingLiabilityDeduction((prev) => ({ ...prev, amount: event.target.value }))
+                        }
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      className="mt-2 btn-pill"
+                      onClick={addLiabilityDeduction}
+                    >
+                      Add liability deduction
+                    </button>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600">
+                    <p>
+                      Retainer deduction: <span className="font-semibold">{retainerDeductionAmount.toLocaleString()} {caseState.data.currency}</span>
+                    </p>
+                    <p>
+                      Extra deductions: <span className="font-semibold">{customDeductionsTotal.toLocaleString()} {caseState.data.currency}</span>
+                    </p>
+                    <p>
+                      Total deductions: <span className="font-semibold">{payoutTotalDeductions.toLocaleString()} {caseState.data.currency}</span>
+                    </p>
+                    <p>
+                      Net payout to beneficiary: <span className="font-semibold">{payoutNetPreview.toLocaleString()} {caseState.data.currency}</span>
+                    </p>
+                  </div>
+                  {payoutDeductions.length > 0 && (
+                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                      <p className="text-xs font-semibold uppercase text-slate-500">Queued deductions</p>
+                      <ul className="mt-2 space-y-2 text-xs text-slate-700">
+                        {payoutDeductions.map((row) => (
+                          <li key={row.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-2 py-1">
+                            <span>
+                              {row.label} - {Number(row.amount).toLocaleString()} {caseState.data.currency}
+                            </span>
+                            <button
+                              type="button"
+                              className="btn-pill"
+                              onClick={() => removePayoutDeduction(row.id)}
+                            >
+                              Remove
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                   <label className="text-xs text-slate-500">
                     Channel
                     <input
@@ -805,9 +1275,11 @@ export function WelfarePanel({
                 <DataTable
                   title="Payouts"
                   emptyLabel="No payouts yet."
-                  headers={['Amount', 'Channel', 'Status', 'Date']}
+                  headers={['Gross', 'Deductions', 'Net', 'Channel', 'Status', 'Date']}
                   rows={caseState.data.payouts.map((payout) => [
-                    `${payout.amount.toLocaleString()} ${payout.currency}`,
+                    `${(payout.grossAmount ?? payout.amount).toLocaleString()} ${payout.currency}`,
+                    `${(payout.totalDeductions ?? 0).toLocaleString()} ${payout.currency}`,
+                    `${(payout.netAmount ?? payout.amount).toLocaleString()} ${payout.currency}`,
                     payout.channel,
                     payout.status,
                     payout.disbursedAt ? new Date(payout.disbursedAt).toLocaleString() : '-',
@@ -817,6 +1289,8 @@ export function WelfarePanel({
             </div>
           )}
         </section>
+      )}
+      </>
       )}
     </section>
   );
@@ -842,36 +1316,82 @@ function DataTable({
   rows: (string | number)[][];
   emptyLabel: string;
 }) {
+  const [query, setQuery] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const filteredRows = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) {
+      return rows;
+    }
+    return rows.filter((row) =>
+      row.some((cell) => String(cell).toLowerCase().includes(needle)),
+    );
+  }, [query, rows]);
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pagedRows = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredRows.slice(start, start + pageSize);
+  }, [currentPage, filteredRows, pageSize]);
+
   return (
     <section className="surface-card p-4">
-      <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
-      {rows.length === 0 ? (
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+        <p className="text-xs text-slate-500">{filteredRows.length} record(s)</p>
+      </div>
+      <label className="mt-3 block text-xs text-slate-500">
+        Search {title.toLowerCase()}
+        <input
+          className="field-input text-sm"
+          placeholder="Filter rows"
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setPage(1);
+          }}
+        />
+      </label>
+      {filteredRows.length === 0 ? (
         <p className="mt-2 text-sm text-slate-500">{emptyLabel}</p>
       ) : (
-        <div className="table-wrap">
-          <table className="table-base">
-            <thead className="text-xs uppercase text-slate-500">
-              <tr>
-                {headers.map((header) => (
-                  <th key={header} className="py-2">
-                    {header}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row, index) => (
-                <tr key={`${title}-${index}`} className="table-row">
-                  {row.map((cell, cellIndex) => (
-                    <td key={`${title}-${index}-${cellIndex}`} className="py-2 pr-4 text-slate-700">
-                      {cell}
-                    </td>
+        <>
+          <div className="table-wrap">
+            <table className="table-base">
+              <thead className="text-xs uppercase text-slate-500">
+                <tr>
+                  {headers.map((header) => (
+                    <th key={header} className="py-2">
+                      {header}
+                    </th>
                   ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {pagedRows.map((row, index) => (
+                  <tr key={`${title}-${currentPage}-${index}`} className="table-row">
+                    {row.map((cell, cellIndex) => (
+                      <td key={`${title}-${currentPage}-${index}-${cellIndex}`} className="py-2 pr-4 text-slate-700">
+                        {cell}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <PaginationControls
+            page={currentPage}
+            pageSize={pageSize}
+            total={filteredRows.length}
+            onPageChange={setPage}
+            onPageSizeChange={(value) => {
+              setPageSize(value);
+              setPage(1);
+            }}
+          />
+        </>
       )}
     </section>
   );

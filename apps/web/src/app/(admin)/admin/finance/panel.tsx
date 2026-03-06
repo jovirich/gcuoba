@@ -16,6 +16,7 @@ import type {
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { fetchJson, API_BASE_URL } from '@/lib/api';
+import { PaginationControls } from '@/components/ui/pagination-controls';
 
 type Props = {
   summary: FinanceAdminSummaryDTO;
@@ -42,6 +43,7 @@ type SchemeFormState = {
   amount: string;
   currency: string;
   frequency: 'monthly' | 'quarterly' | 'annual' | 'one_off';
+  oneOffYear: string;
   scopeType: 'global' | 'branch' | 'class';
   scopeId: string;
 };
@@ -194,6 +196,7 @@ export function FinancePanel({
     amount: '',
     currency: 'NGN',
     frequency: 'annual',
+    oneOffYear: String(new Date().getFullYear()),
     scopeType: 'global',
     scopeId: '',
   });
@@ -212,6 +215,9 @@ export function FinancePanel({
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
   const [reportDownloading, setReportDownloading] = useState(false);
+  const [reportQuery, setReportQuery] = useState('');
+  const [reportPage, setReportPage] = useState(1);
+  const [reportPageSize, setReportPageSize] = useState(20);
   const [scopeAccess, setScopeAccess] = useState<FinanceReportScopeAccessDTO | null>(null);
   const [scopeAccessError, setScopeAccessError] = useState<string | null>(null);
   const [scopedFilters, setScopedFilters] = useState<ReportFilterState>({
@@ -224,6 +230,9 @@ export function FinancePanel({
   const [scopedLoading, setScopedLoading] = useState(false);
   const [scopedError, setScopedError] = useState<string | null>(null);
   const [scopedDownloading, setScopedDownloading] = useState(false);
+  const [scopedQuery, setScopedQuery] = useState('');
+  const [scopedPage, setScopedPage] = useState(1);
+  const [scopedPageSize, setScopedPageSize] = useState(20);
   const [snapshotCapture, setSnapshotCapture] = useState<SnapshotCaptureState>({
     year: String(currentYear),
     month: String(new Date().getMonth() + 1),
@@ -232,6 +241,9 @@ export function FinancePanel({
   const [snapshotsLoading, setSnapshotsLoading] = useState(false);
   const [snapshotsError, setSnapshotsError] = useState<string | null>(null);
   const [snapshotCaptureBusy, setSnapshotCaptureBusy] = useState(false);
+  const [snapshotQuery, setSnapshotQuery] = useState('');
+  const [snapshotPage, setSnapshotPage] = useState(1);
+  const [snapshotPageSize, setSnapshotPageSize] = useState(20);
   const [projectForm, setProjectForm] = useState<ProjectFormState>({
     name: '',
     scopeType: 'global',
@@ -278,6 +290,15 @@ export function FinancePanel({
     currency: 'NGN',
     notes: '',
   });
+  const [schemeQuery, setSchemeQuery] = useState('');
+  const [schemePage, setSchemePage] = useState(1);
+  const [schemePageSize, setSchemePageSize] = useState(20);
+  const [projectQuery, setProjectQuery] = useState('');
+  const [projectPage, setProjectPage] = useState(1);
+  const [projectPageSize, setProjectPageSize] = useState(20);
+  const [expenseQuery, setExpenseQuery] = useState('');
+  const [expensePage, setExpensePage] = useState(1);
+  const [expensePageSize, setExpensePageSize] = useState(20);
 
   const visibleSections = useMemo(() => {
     const source = enabledSections?.length ? enabledSections : ALL_FINANCE_SECTIONS;
@@ -294,9 +315,17 @@ export function FinancePanel({
     setActiveSection(nextSection);
   }, [initialSection, visibleSections]);
 
-  const outstandingInvoices = useMemo(() => {
-    return summary.invoices.filter((invoice) => (invoice.balance ?? 0) > 0);
-  }, [summary.invoices]);
+  useEffect(() => {
+    setSchemePage(1);
+  }, [schemeQuery]);
+
+  useEffect(() => {
+    setProjectPage(1);
+  }, [projectQuery]);
+
+  useEffect(() => {
+    setExpensePage(1);
+  }, [expenseQuery]);
 
   const scopeLabelById = useMemo(() => {
     const labels = new Map<string, string>();
@@ -304,6 +333,143 @@ export function FinancePanel({
     scopeOptions.classes.forEach((classSet) => labels.set(classSet.id, `${classSet.entryYear} - ${classSet.label}`));
     return labels;
   }, [scopeOptions]);
+
+  const outstandingInvoices = useMemo(() => {
+    return summary.invoices.filter((invoice) => (invoice.balance ?? 0) > 0);
+  }, [summary.invoices]);
+
+  const filteredSchemes = useMemo(() => {
+    const query = schemeQuery.trim().toLowerCase();
+    if (!query) {
+      return summary.schemes;
+    }
+    return summary.schemes.filter((scheme) => {
+      const scopeLabel = scheme.scopeId ? scopeLabelById.get(scheme.scopeId) ?? scheme.scopeId : '';
+      return (
+        scheme.title.toLowerCase().includes(query) ||
+        scheme.scopeType.toLowerCase().includes(query) ||
+        scopeLabel.toLowerCase().includes(query) ||
+        scheme.status.toLowerCase().includes(query) ||
+        scheme.frequency.toLowerCase().includes(query)
+      );
+    });
+  }, [schemeQuery, summary.schemes, scopeLabelById]);
+  const schemeTotalPages = Math.max(1, Math.ceil(filteredSchemes.length / schemePageSize));
+  const schemeCurrentPage = Math.min(Math.max(schemePage, 1), schemeTotalPages);
+  const pagedSchemes = useMemo(() => {
+    const start = (schemeCurrentPage - 1) * schemePageSize;
+    return filteredSchemes.slice(start, start + schemePageSize);
+  }, [filteredSchemes, schemeCurrentPage, schemePageSize]);
+
+  const filteredProjects = useMemo(() => {
+    const query = projectQuery.trim().toLowerCase();
+    if (!query) {
+      return summary.projects;
+    }
+    return summary.projects.filter((project) => {
+      const scopeLabel = project.scopeId ? scopeLabelById.get(project.scopeId) ?? project.scopeId : '';
+      return (
+        project.name.toLowerCase().includes(query) ||
+        project.scopeType.toLowerCase().includes(query) ||
+        scopeLabel.toLowerCase().includes(query) ||
+        project.status.toLowerCase().includes(query)
+      );
+    });
+  }, [projectQuery, summary.projects, scopeLabelById]);
+  const projectTotalPages = Math.max(1, Math.ceil(filteredProjects.length / projectPageSize));
+  const projectCurrentPage = Math.min(Math.max(projectPage, 1), projectTotalPages);
+  const pagedProjects = useMemo(() => {
+    const start = (projectCurrentPage - 1) * projectPageSize;
+    return filteredProjects.slice(start, start + projectPageSize);
+  }, [filteredProjects, projectCurrentPage, projectPageSize]);
+
+  const filteredExpenses = useMemo(() => {
+    const query = expenseQuery.trim().toLowerCase();
+    if (!query) {
+      return summary.expenses;
+    }
+    return summary.expenses.filter((expense) => {
+      const scopeLabel = expense.scopeId ? scopeLabelById.get(expense.scopeId) ?? expense.scopeId : '';
+      return (
+        expense.title.toLowerCase().includes(query) ||
+        expense.scopeType.toLowerCase().includes(query) ||
+        scopeLabel.toLowerCase().includes(query) ||
+        (expense.projectName ?? '').toLowerCase().includes(query) ||
+        expense.status.toLowerCase().includes(query) ||
+        expense.approvalStage.toLowerCase().includes(query)
+      );
+    });
+  }, [expenseQuery, summary.expenses, scopeLabelById]);
+  const expenseTotalPages = Math.max(1, Math.ceil(filteredExpenses.length / expensePageSize));
+  const expenseCurrentPage = Math.min(Math.max(expensePage, 1), expenseTotalPages);
+  const pagedExpenses = useMemo(() => {
+    const start = (expenseCurrentPage - 1) * expensePageSize;
+    return filteredExpenses.slice(start, start + expensePageSize);
+  }, [filteredExpenses, expenseCurrentPage, expensePageSize]);
+
+  const filteredReportRows = useMemo(() => {
+    const rows = reportData?.rows ?? [];
+    const query = reportQuery.trim().toLowerCase();
+    if (!query) {
+      return rows;
+    }
+    return rows.filter((row) => {
+      return (
+        (row.userName ?? '').toLowerCase().includes(query) ||
+        (row.userAlumniNumber ?? '').toLowerCase().includes(query) ||
+        row.userId.toLowerCase().includes(query) ||
+        (row.currency ?? '').toLowerCase().includes(query)
+      );
+    });
+  }, [reportData?.rows, reportQuery]);
+  const reportTotalPages = Math.max(1, Math.ceil(filteredReportRows.length / reportPageSize));
+  const reportCurrentPage = Math.min(Math.max(reportPage, 1), reportTotalPages);
+  const pagedReportRows = useMemo(() => {
+    const start = (reportCurrentPage - 1) * reportPageSize;
+    return filteredReportRows.slice(start, start + reportPageSize);
+  }, [filteredReportRows, reportCurrentPage, reportPageSize]);
+
+  const filteredScopedRows = useMemo(() => {
+    const rows = scopedReport?.rows ?? [];
+    const query = scopedQuery.trim().toLowerCase();
+    if (!query) {
+      return rows;
+    }
+    return rows.filter((row) => {
+      return (
+        (row.userName ?? '').toLowerCase().includes(query) ||
+        (row.userAlumniNumber ?? '').toLowerCase().includes(query) ||
+        row.userId.toLowerCase().includes(query) ||
+        (row.currency ?? '').toLowerCase().includes(query)
+      );
+    });
+  }, [scopedQuery, scopedReport?.rows]);
+  const scopedTotalPages = Math.max(1, Math.ceil(filteredScopedRows.length / scopedPageSize));
+  const scopedCurrentPage = Math.min(Math.max(scopedPage, 1), scopedTotalPages);
+  const pagedScopedRows = useMemo(() => {
+    const start = (scopedCurrentPage - 1) * scopedPageSize;
+    return filteredScopedRows.slice(start, start + scopedPageSize);
+  }, [filteredScopedRows, scopedCurrentPage, scopedPageSize]);
+
+  const filteredSnapshots = useMemo(() => {
+    const query = snapshotQuery.trim().toLowerCase();
+    if (!query) {
+      return snapshots;
+    }
+    return snapshots.filter((snapshot) => {
+      return (
+        snapshot.period.toLowerCase().includes(query) ||
+        snapshot.scopeType.toLowerCase().includes(query) ||
+        (snapshot.scopeId ?? '').toLowerCase().includes(query)
+      );
+    });
+  }, [snapshotQuery, snapshots]);
+  const snapshotTotalPages = Math.max(1, Math.ceil(filteredSnapshots.length / snapshotPageSize));
+  const snapshotCurrentPage = Math.min(Math.max(snapshotPage, 1), snapshotTotalPages);
+  const pagedSnapshots = useMemo(() => {
+    const start = (snapshotCurrentPage - 1) * snapshotPageSize;
+    return filteredSnapshots.slice(start, start + snapshotPageSize);
+  }, [filteredSnapshots, snapshotCurrentPage, snapshotPageSize]);
 
   const projectOptionsForExpense = useMemo(() => {
     return summary.projects.filter((project) => {
@@ -554,6 +720,7 @@ export function FinancePanel({
       amount: '',
       currency: 'NGN',
       frequency: 'annual',
+      oneOffYear: String(currentYear),
       scopeType: normalized.scopeType,
       scopeId: normalized.scopeId,
     });
@@ -586,6 +753,18 @@ export function FinancePanel({
       setSchemeBusy(false);
       return;
     }
+    const oneOffYear =
+      schemeForm.frequency === 'one_off'
+        ? Number(schemeForm.oneOffYear)
+        : undefined;
+    if (
+      schemeForm.frequency === 'one_off' &&
+      (!Number.isInteger(oneOffYear) || oneOffYear < 2000 || oneOffYear > 2100)
+    ) {
+      setError('Provide a valid one-off year between 2000 and 2100.');
+      setSchemeBusy(false);
+      return;
+    }
 
     try {
       await fetchJson<DuesSchemeDTO>('/finance/schemes', {
@@ -596,6 +775,7 @@ export function FinancePanel({
           amount,
           currency: schemeForm.currency || 'NGN',
           frequency: schemeForm.frequency,
+          oneOffYear,
           scopeType: schemeForm.scopeType,
           scopeId: schemeForm.scopeType === 'global' ? undefined : schemeForm.scopeId,
         }),
@@ -612,11 +792,18 @@ export function FinancePanel({
   }
 
   async function toggleSchemeStatus(scheme: DuesSchemeDTO) {
+    const nextStatus = scheme.status === 'active' ? 'inactive' : 'active';
+    const prompt =
+      nextStatus === 'active'
+        ? `Activate scheme "${scheme.title}"?`
+        : `Deactivate scheme "${scheme.title}"?`;
+    if (!window.confirm(prompt)) {
+      return;
+    }
     setSchemeActionId(scheme.id);
     setError(null);
     setStatus(null);
     try {
-      const nextStatus = scheme.status === 'active' ? 'inactive' : 'active';
       await fetchJson<DuesSchemeDTO>(`/finance/schemes/${scheme.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -640,7 +827,7 @@ export function FinancePanel({
       const response = await fetchJson<{ created: number; skipped: number }>(`/finance/schemes/${scheme.id}/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ year: currentYear }),
+        body: JSON.stringify({ year: scheme.frequency === 'one_off' ? scheme.oneOffYear ?? currentYear : currentYear }),
         token: authToken,
       });
       setStatus(`Generated ${response.created} invoice(s), skipped ${response.skipped}.`);
@@ -881,6 +1068,15 @@ export function FinancePanel({
     endpoint: 'approve-first' | 'approve-final' | 'reject',
     successMessage: string,
   ) {
+    const confirmMessage =
+      endpoint === 'approve-first'
+        ? 'Confirm first-stage approval for this expense?'
+        : endpoint === 'approve-final'
+          ? 'Confirm final approval for this expense?'
+          : 'Confirm rejection of this expense?';
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
     setExpenseActionId(expenseId);
     setError(null);
     setStatus(null);
@@ -1169,6 +1365,21 @@ export function FinancePanel({
               ))}
             </div>
 
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <label className="text-xs text-slate-500">
+                Search overview rows
+                <input
+                  className="field-input text-sm"
+                  placeholder="Search member name or alumni number"
+                  value={reportQuery}
+                  onChange={(event) => {
+                    setReportQuery(event.target.value);
+                    setReportPage(1);
+                  }}
+                />
+              </label>
+              <p className="text-xs text-slate-500 md:pt-6">{filteredReportRows.length} record(s)</p>
+            </div>
             <div className="table-wrap">
               <table className="table-base">
                 <thead className="text-xs uppercase text-slate-500">
@@ -1183,11 +1394,13 @@ export function FinancePanel({
                   </tr>
                 </thead>
                 <tbody>
-                  {reportData.rows.map((row) => (
+                  {pagedReportRows.map((row) => (
                     <tr key={`${row.userId}-${row.currency}`} className="table-row">
                       <td className="py-2">
-                        <p className="font-medium text-slate-900">{row.userName ?? row.userId}</p>
-                        <p className="text-xs text-slate-500">{row.userId}</p>
+                        <p className="font-medium text-slate-900">{formatMemberIdentity(row.userName, row.userAlumniNumber)}</p>
+                        {row.userName && row.userAlumniNumber && (
+                          <p className="text-xs text-slate-500">{row.userName}</p>
+                        )}
                       </td>
                       <td className="py-2">{row.currency}</td>
                       <td className="py-2">{row.invoices}</td>
@@ -1200,6 +1413,16 @@ export function FinancePanel({
                 </tbody>
               </table>
             </div>
+            <PaginationControls
+              page={reportCurrentPage}
+              pageSize={reportPageSize}
+              total={filteredReportRows.length}
+              onPageChange={setReportPage}
+              onPageSizeChange={(value) => {
+                setReportPageSize(value);
+                setReportPage(1);
+              }}
+            />
           </>
         )}
       </section>
@@ -1326,6 +1549,21 @@ export function FinancePanel({
               ))}
             </div>
 
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <label className="text-xs text-slate-500">
+                Search scoped rows
+                <input
+                  className="field-input text-sm"
+                  placeholder="Search member name or alumni number"
+                  value={scopedQuery}
+                  onChange={(event) => {
+                    setScopedQuery(event.target.value);
+                    setScopedPage(1);
+                  }}
+                />
+              </label>
+              <p className="text-xs text-slate-500 md:pt-6">{filteredScopedRows.length} record(s)</p>
+            </div>
             <div className="table-wrap">
               <table className="table-base">
                 <thead className="text-xs uppercase text-slate-500">
@@ -1340,11 +1578,13 @@ export function FinancePanel({
                   </tr>
                 </thead>
                 <tbody>
-                  {scopedReport.rows.map((row) => (
+                  {pagedScopedRows.map((row) => (
                     <tr key={`${row.userId}-${row.currency}`} className="table-row">
                       <td className="py-2">
-                        <p className="font-medium text-slate-900">{row.userName ?? row.userId}</p>
-                        <p className="text-xs text-slate-500">{row.userId}</p>
+                        <p className="font-medium text-slate-900">{formatMemberIdentity(row.userName, row.userAlumniNumber)}</p>
+                        {row.userName && row.userAlumniNumber && (
+                          <p className="text-xs text-slate-500">{row.userName}</p>
+                        )}
                       </td>
                       <td className="py-2">{row.currency}</td>
                       <td className="py-2">{row.invoices}</td>
@@ -1357,6 +1597,16 @@ export function FinancePanel({
                 </tbody>
               </table>
             </div>
+            <PaginationControls
+              page={scopedCurrentPage}
+              pageSize={scopedPageSize}
+              total={filteredScopedRows.length}
+              onPageChange={setScopedPage}
+              onPageSizeChange={(value) => {
+                setScopedPageSize(value);
+                setScopedPage(1);
+              }}
+            />
           </>
         )}
       </section>
@@ -1415,10 +1665,26 @@ export function FinancePanel({
 
         {snapshotsError && <p className="mt-3 text-sm text-rose-600">{snapshotsError}</p>}
         {snapshotsLoading && <p className="mt-3 text-sm text-slate-500">Loading snapshots...</p>}
-        {!snapshotsLoading && snapshots.length === 0 && (
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <label className="text-xs text-slate-500">
+            Search snapshots
+            <input
+              className="field-input text-sm"
+              placeholder="Search period or scope"
+              value={snapshotQuery}
+              onChange={(event) => {
+                setSnapshotQuery(event.target.value);
+                setSnapshotPage(1);
+              }}
+            />
+          </label>
+          <p className="text-xs text-slate-500 md:pt-6">{filteredSnapshots.length} record(s)</p>
+        </div>
+        {!snapshotsLoading && filteredSnapshots.length === 0 && (
           <p className="mt-3 text-sm text-slate-500">No snapshots yet.</p>
         )}
-        {snapshots.length > 0 && (
+        {filteredSnapshots.length > 0 && (
+          <>
           <div className="table-wrap">
             <table className="table-base">
               <thead className="text-xs uppercase text-slate-500">
@@ -1431,7 +1697,7 @@ export function FinancePanel({
                 </tr>
               </thead>
               <tbody>
-                {snapshots.map((snapshot) => (
+                {pagedSnapshots.map((snapshot) => (
                   <tr key={snapshot.id} className="table-row">
                     <td className="py-2">{snapshot.period}</td>
                     <td className="py-2">
@@ -1450,6 +1716,17 @@ export function FinancePanel({
               </tbody>
             </table>
           </div>
+          <PaginationControls
+            page={snapshotCurrentPage}
+            pageSize={snapshotPageSize}
+            total={filteredSnapshots.length}
+            onPageChange={setSnapshotPage}
+            onPageSizeChange={(value) => {
+              setSnapshotPageSize(value);
+              setSnapshotPage(1);
+            }}
+          />
+          </>
         )}
       </section>
 
@@ -1502,6 +1779,10 @@ export function FinancePanel({
                 setSchemeForm((prev) => ({
                   ...prev,
                   frequency: event.target.value as SchemeFormState['frequency'],
+                  oneOffYear:
+                    event.target.value === 'one_off' && !prev.oneOffYear
+                      ? String(currentYear)
+                      : prev.oneOffYear,
                 }))
               }
             >
@@ -1511,6 +1792,20 @@ export function FinancePanel({
               <option value="one_off">One-off</option>
             </select>
           </label>
+          {schemeForm.frequency === 'one_off' && (
+            <label className="text-sm text-slate-600">
+              One-off year
+              <input
+                type="number"
+                min="2000"
+                max="2100"
+                className="field-input"
+                value={schemeForm.oneOffYear}
+                onChange={(event) => setSchemeForm((prev) => ({ ...prev, oneOffYear: event.target.value }))}
+                required
+              />
+            </label>
+          )}
           <label className="text-sm text-slate-600">
             Scope
             <select
@@ -1687,6 +1982,18 @@ export function FinancePanel({
           </form>
         )}
 
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <label className="text-xs text-slate-500">
+            Search schemes
+            <input
+              className="field-input text-sm"
+              placeholder="Search title, scope, status, or frequency"
+              value={schemeQuery}
+              onChange={(event) => setSchemeQuery(event.target.value)}
+            />
+          </label>
+          <p className="text-xs text-slate-500 md:pt-6">{filteredSchemes.length} record(s)</p>
+        </div>
         <div className="table-wrap">
           <table className="table-base">
             <thead className="text-xs uppercase text-slate-500">
@@ -1700,13 +2007,16 @@ export function FinancePanel({
               </tr>
             </thead>
             <tbody>
-              {summary.schemes.map((scheme) => (
+              {pagedSchemes.map((scheme) => (
                 <tr key={scheme.id} className="table-row">
                   <td className="py-2">{scheme.title}</td>
                   <td className="py-2">
                     {scheme.amount.toLocaleString()} {scheme.currency}
                   </td>
-                  <td className="py-2 text-xs uppercase text-slate-500">{scheme.frequency}</td>
+                  <td className="py-2 text-xs uppercase text-slate-500">
+                    {scheme.frequency}
+                    {scheme.frequency === 'one_off' && scheme.oneOffYear ? ` (${scheme.oneOffYear})` : ''}
+                  </td>
                   <td className="py-2 text-xs text-slate-600">
                     {scheme.scopeType}
                     {scheme.scopeId ? ` (${scopeLabelById.get(scheme.scopeId) ?? scheme.scopeId})` : ''}
@@ -1728,7 +2038,7 @@ export function FinancePanel({
                         onClick={() => generateInvoices(scheme)}
                         disabled={schemeActionId === scheme.id || scheme.status !== 'active'}
                       >
-                        Generate {currentYear}
+                        Generate {scheme.frequency === 'one_off' && scheme.oneOffYear ? scheme.oneOffYear : currentYear}
                       </button>
                       <button
                         type="button"
@@ -1745,6 +2055,16 @@ export function FinancePanel({
             </tbody>
           </table>
         </div>
+        <PaginationControls
+          page={schemeCurrentPage}
+          pageSize={schemePageSize}
+          total={filteredSchemes.length}
+          onPageChange={setSchemePage}
+          onPageSizeChange={(value) => {
+            setSchemePageSize(value);
+            setSchemePage(1);
+          }}
+        />
       </section>
       <InvoiceTable invoices={summary.invoices} />
       </>
@@ -1754,7 +2074,7 @@ export function FinancePanel({
       <section className="surface-card p-6 shadow-sm">
         <div className="flex items-center justify-between gap-4">
           <h2 className="text-lg font-semibold text-slate-900">Projects</h2>
-          <span className="text-sm text-slate-500">{summary.projects.length} project(s)</span>
+          <span className="text-sm text-slate-500">{filteredProjects.length} project(s)</span>
         </div>
 
         <form onSubmit={createProject} className="mt-4 grid gap-4 md:grid-cols-6">
@@ -2006,6 +2326,18 @@ export function FinancePanel({
           </form>
         )}
 
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <label className="text-xs text-slate-500">
+            Search projects
+            <input
+              className="field-input text-sm"
+              placeholder="Search name, scope, or status"
+              value={projectQuery}
+              onChange={(event) => setProjectQuery(event.target.value)}
+            />
+          </label>
+          <p className="text-xs text-slate-500 md:pt-6">{filteredProjects.length} record(s)</p>
+        </div>
         <div className="table-wrap">
           <table className="table-base">
             <thead className="text-xs uppercase text-slate-500">
@@ -2019,7 +2351,7 @@ export function FinancePanel({
               </tr>
             </thead>
             <tbody>
-              {summary.projects.map((project) => (
+              {pagedProjects.map((project) => (
                 <tr key={project.id} className="table-row">
                   <td className="py-2">
                     <div className="font-medium text-slate-900">{project.name}</div>
@@ -2061,6 +2393,16 @@ export function FinancePanel({
             </tbody>
           </table>
         </div>
+        <PaginationControls
+          page={projectCurrentPage}
+          pageSize={projectPageSize}
+          total={filteredProjects.length}
+          onPageChange={setProjectPage}
+          onPageSizeChange={(value) => {
+            setProjectPageSize(value);
+            setProjectPage(1);
+          }}
+        />
       </section>
       )}
 
@@ -2068,7 +2410,7 @@ export function FinancePanel({
       <section className="surface-card p-6 shadow-sm">
         <div className="flex items-center justify-between gap-4">
           <h2 className="text-lg font-semibold text-slate-900">Expenses</h2>
-          <span className="text-sm text-slate-500">{summary.expenses.length} expense(s)</span>
+          <span className="text-sm text-slate-500">{filteredExpenses.length} expense(s)</span>
         </div>
 
         <form onSubmit={createExpense} className="mt-4 grid gap-4 md:grid-cols-6">
@@ -2191,6 +2533,18 @@ export function FinancePanel({
           </div>
         </form>
 
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <label className="text-xs text-slate-500">
+            Search expenses
+            <input
+              className="field-input text-sm"
+              placeholder="Search title, project, scope, approval, or status"
+              value={expenseQuery}
+              onChange={(event) => setExpenseQuery(event.target.value)}
+            />
+          </label>
+          <p className="text-xs text-slate-500 md:pt-6">{filteredExpenses.length} record(s)</p>
+        </div>
         <div className="table-wrap">
           <table className="table-base">
             <thead className="text-xs uppercase text-slate-500">
@@ -2205,7 +2559,7 @@ export function FinancePanel({
               </tr>
             </thead>
             <tbody>
-              {summary.expenses.map((expense) => (
+              {pagedExpenses.map((expense) => (
                 <tr key={expense.id} className="table-row">
                   <td className="py-2">
                     <div className="font-medium text-slate-900">{expense.title}</div>
@@ -2281,6 +2635,16 @@ export function FinancePanel({
             </tbody>
           </table>
         </div>
+        <PaginationControls
+          page={expenseCurrentPage}
+          pageSize={expensePageSize}
+          total={filteredExpenses.length}
+          onPageChange={setExpensePage}
+          onPageSizeChange={(value) => {
+            setExpensePageSize(value);
+            setExpensePage(1);
+          }}
+        />
       </section>
       )}
 
@@ -2305,7 +2669,7 @@ export function FinancePanel({
                 <option value="">Select an invoice</option>
                 {outstandingInvoices.map((invoice) => (
                   <option key={invoice.id} value={invoice.id}>
-                    {invoice.userName ?? invoice.userId} - {invoice.scheme?.title ?? 'Dues'} (
+                    {formatMemberIdentity(invoice.userName, invoice.userAlumniNumber)} - {invoice.scheme?.title ?? 'Dues'} (
                     {invoice.balance?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? invoice.amount}
                     )
                   </option>
@@ -2377,12 +2741,80 @@ export function FinancePanel({
   );
 }
 
+function formatMemberIdentity(name?: string, alumniNumber?: string | null, fallbackId?: string) {
+  if (alumniNumber && alumniNumber.trim()) {
+    return alumniNumber.trim();
+  }
+  if (name && name.trim()) {
+    return name.trim();
+  }
+  return fallbackId ?? 'Member';
+}
+
 function InvoiceTable({ invoices }: { invoices: DuesInvoiceDTO[] }) {
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'unpaid' | 'part_paid' | 'paid'>('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const filteredInvoices = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    return invoices.filter((invoice) => {
+      if (statusFilter !== 'all' && invoice.status !== statusFilter) {
+        return false;
+      }
+      if (!normalizedQuery) {
+        return true;
+      }
+      return (
+        (invoice.userName ?? '').toLowerCase().includes(normalizedQuery) ||
+        (invoice.userAlumniNumber ?? '').toLowerCase().includes(normalizedQuery) ||
+        invoice.userId.toLowerCase().includes(normalizedQuery) ||
+        (invoice.scheme?.title ?? 'dues').toLowerCase().includes(normalizedQuery)
+      );
+    });
+  }, [invoices, query, statusFilter]);
+  const totalPages = Math.max(1, Math.ceil(filteredInvoices.length / pageSize));
+  const currentPage = Math.min(Math.max(page, 1), totalPages);
+  const pagedInvoices = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredInvoices.slice(start, start + pageSize);
+  }, [currentPage, filteredInvoices, pageSize]);
+
   return (
     <section className="surface-card p-6 shadow-sm">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-slate-900">Invoices</h2>
-        <span className="text-sm text-slate-500">{invoices.length} record(s)</span>
+        <span className="text-sm text-slate-500">{filteredInvoices.length} record(s)</span>
+      </div>
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        <label className="text-xs text-slate-500">
+          Search invoices
+          <input
+            className="field-input text-sm"
+            placeholder="Search member or scheme"
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setPage(1);
+            }}
+          />
+        </label>
+        <label className="text-xs text-slate-500">
+          Status
+          <select
+            className="field-input text-sm"
+            value={statusFilter}
+            onChange={(event) => {
+              setStatusFilter(event.target.value as 'all' | 'unpaid' | 'part_paid' | 'paid');
+              setPage(1);
+            }}
+          >
+            <option value="all">All</option>
+            <option value="unpaid">Unpaid</option>
+            <option value="part_paid">Part paid</option>
+            <option value="paid">Paid</option>
+          </select>
+        </label>
       </div>
       <div className="table-wrap">
         <table className="table-base">
@@ -2397,10 +2829,19 @@ function InvoiceTable({ invoices }: { invoices: DuesInvoiceDTO[] }) {
             </tr>
           </thead>
           <tbody>
-            {invoices.map((invoice) => (
+            {pagedInvoices.length === 0 && (
+              <tr>
+                <td colSpan={6} className="py-3 text-sm text-slate-500">
+                  No invoices found for the selected filters.
+                </td>
+              </tr>
+            )}
+            {pagedInvoices.map((invoice) => (
               <tr key={invoice.id} className="table-row">
                 <td className="py-2">
-                  <div className="font-medium text-slate-900">{invoice.userName ?? invoice.userId}</div>
+                  <div className="font-medium text-slate-900">
+                    {formatMemberIdentity(invoice.userName, invoice.userAlumniNumber, invoice.userId)}
+                  </div>
                   <div className="text-xs text-slate-500">{invoice.periodStart ? new Date(invoice.periodStart).toLocaleDateString() : '-'}</div>
                 </td>
                 <td className="py-2">{invoice.scheme?.title ?? 'Dues'}</td>
@@ -2413,6 +2854,16 @@ function InvoiceTable({ invoices }: { invoices: DuesInvoiceDTO[] }) {
           </tbody>
         </table>
       </div>
+      <PaginationControls
+        page={currentPage}
+        pageSize={pageSize}
+        total={filteredInvoices.length}
+        onPageChange={setPage}
+        onPageSizeChange={(value) => {
+          setPageSize(value);
+          setPage(1);
+        }}
+      />
     </section>
   );
 }
@@ -2420,6 +2871,36 @@ function InvoiceTable({ invoices }: { invoices: DuesInvoiceDTO[] }) {
 function PaymentTable({ payments, authToken }: { payments: PaymentDTO[]; authToken: string }) {
   const [downloading, setDownloading] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [channelFilter, setChannelFilter] = useState<'all' | 'manual' | 'transfer' | 'pos' | 'cash'>('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+
+  const filteredPayments = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+      return payments.filter((payment) => {
+      if (channelFilter !== 'all' && payment.channel !== channelFilter) {
+        return false;
+      }
+      if (!normalizedQuery) {
+        return true;
+      }
+        return (
+          (payment.payerName ?? '').toLowerCase().includes(normalizedQuery) ||
+          (payment.payerAlumniNumber ?? '').toLowerCase().includes(normalizedQuery) ||
+          payment.payerUserId.toLowerCase().includes(normalizedQuery) ||
+          (payment.reference ?? '').toLowerCase().includes(normalizedQuery) ||
+          payment.channel.toLowerCase().includes(normalizedQuery)
+      );
+    });
+  }, [channelFilter, payments, query]);
+  const totalPages = Math.max(1, Math.ceil(filteredPayments.length / pageSize));
+  const currentPage = Math.min(Math.max(page, 1), totalPages);
+
+  const pagedPayments = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredPayments.slice(start, start + pageSize);
+  }, [currentPage, filteredPayments, pageSize]);
 
   async function handleDownload(paymentId: string) {
     setDownloading(paymentId);
@@ -2464,55 +2945,104 @@ function PaymentTable({ payments, authToken }: { payments: PaymentDTO[]; authTok
     <section className="surface-card p-6 shadow-sm">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-slate-900">Recent payments</h2>
-        <span className="text-sm text-slate-500">{payments.length} record(s)</span>
+        <span className="text-sm text-slate-500">{filteredPayments.length} record(s)</span>
       </div>
       {downloadError && <p className="mt-2 text-sm text-rose-600">{downloadError}</p>}
-      <div className="table-wrap">
-        <table className="table-base">
-          <thead className="text-xs uppercase text-slate-500">
-            <tr>
-              <th className="py-2">Member</th>
-              <th className="py-2">Amount</th>
-              <th className="py-2">Applied</th>
-              <th className="py-2">Unapplied</th>
-              <th className="py-2">Channel</th>
-              <th className="py-2">Reference</th>
-              <th className="py-2">Date</th>
-              <th className="py-2">Receipt</th>
-            </tr>
-          </thead>
-          <tbody>
-            {payments.map((payment) => {
-              const applied = payment.applications.reduce((sum, application) => sum + application.amount, 0);
-              const unapplied = Math.max(payment.amount - applied, 0);
-
-              return (
-                <tr key={payment.id} className="table-row">
-                  <td className="py-2">{payment.payerUserId}</td>
-                  <td className="py-2">{payment.amount.toLocaleString()} {payment.currency}</td>
-                  <td className="py-2">{applied.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
-                  <td className={`py-2 ${unapplied > 0.01 ? 'font-semibold text-amber-700' : 'text-slate-500'}`}>
-                    {unapplied.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                  </td>
-                  <td className="py-2 text-xs uppercase text-slate-500">{payment.channel}</td>
-                  <td className="py-2 text-xs text-slate-500">{payment.reference ?? '-'}</td>
-                  <td className="py-2 text-xs text-slate-500">{payment.paidAt ? new Date(payment.paidAt).toLocaleString() : '-'}</td>
-                  <td className="py-2">
-                    <button
-                      type="button"
-                      className="btn-pill disabled:opacity-50"
-                      onClick={() => handleDownload(payment.id)}
-                      disabled={downloading === payment.id}
-                    >
-                      {downloading === payment.id ? 'Preparing...' : 'Download'}
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        <label className="text-xs text-slate-500">
+          Search payments
+          <input
+            className="field-input text-sm"
+            placeholder="Search member, channel, or reference"
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setPage(1);
+            }}
+          />
+        </label>
+        <label className="text-xs text-slate-500">
+          Channel
+          <select
+            className="field-input text-sm"
+            value={channelFilter}
+            onChange={(event) =>
+              {
+                setChannelFilter(event.target.value as 'all' | 'manual' | 'transfer' | 'pos' | 'cash');
+                setPage(1);
+              }
+            }
+          >
+            <option value="all">All</option>
+            <option value="manual">Manual</option>
+            <option value="transfer">Transfer</option>
+            <option value="pos">POS</option>
+            <option value="cash">Cash</option>
+          </select>
+        </label>
       </div>
+      {filteredPayments.length === 0 ? (
+        <p className="mt-3 text-sm text-slate-500">No payments found for the selected filters.</p>
+      ) : (
+        <div className="table-wrap">
+          <table className="table-base">
+            <thead className="text-xs uppercase text-slate-500">
+              <tr>
+                <th className="py-2">Member</th>
+                <th className="py-2">Amount</th>
+                <th className="py-2">Applied</th>
+                <th className="py-2">Unapplied</th>
+                <th className="py-2">Channel</th>
+                <th className="py-2">Reference</th>
+                <th className="py-2">Date</th>
+                <th className="py-2">Receipt</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pagedPayments.map((payment) => {
+                const applied = payment.applications.reduce((sum, application) => sum + application.amount, 0);
+                const unapplied = Math.max(payment.amount - applied, 0);
+
+                return (
+                  <tr key={payment.id} className="table-row">
+                    <td className="py-2">
+                      {formatMemberIdentity(payment.payerName, payment.payerAlumniNumber, payment.payerUserId)}
+                    </td>
+                    <td className="py-2">{payment.amount.toLocaleString()} {payment.currency}</td>
+                    <td className="py-2">{applied.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                    <td className={`py-2 ${unapplied > 0.01 ? 'font-semibold text-amber-700' : 'text-slate-500'}`}>
+                      {unapplied.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </td>
+                    <td className="py-2 text-xs uppercase text-slate-500">{payment.channel}</td>
+                    <td className="py-2 text-xs text-slate-500">{payment.reference ?? '-'}</td>
+                    <td className="py-2 text-xs text-slate-500">{payment.paidAt ? new Date(payment.paidAt).toLocaleString() : '-'}</td>
+                    <td className="py-2">
+                      <button
+                        type="button"
+                        className="btn-pill disabled:opacity-50"
+                        onClick={() => handleDownload(payment.id)}
+                        disabled={downloading === payment.id}
+                      >
+                        {downloading === payment.id ? 'Preparing...' : 'Download'}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <PaginationControls
+        page={currentPage}
+        pageSize={pageSize}
+        total={filteredPayments.length}
+        onPageChange={setPage}
+        onPageSizeChange={(value) => {
+          setPageSize(value);
+          setPage(1);
+        }}
+      />
     </section>
   );
 }

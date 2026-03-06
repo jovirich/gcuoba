@@ -44,16 +44,7 @@ export declare const NotificationSchema: import("mongoose").Schema<Notification,
     }, "id"> & {
         id: string;
     }> | undefined;
-    type?: import("mongoose").SchemaDefinitionProperty<"action_required" | "info" | "success" | "warning", Notification, Document<unknown, {}, Notification, {
-        id: string;
-    }, import("mongoose").DefaultSchemaOptions> & Omit<Notification & Required<{
-        _id: import("mongoose").Types.ObjectId;
-    }> & {
-        __v: number;
-    }, "id"> & {
-        id: string;
-    }> | undefined;
-    title?: import("mongoose").SchemaDefinitionProperty<string, Notification, Document<unknown, {}, Notification, {
+    type?: import("mongoose").SchemaDefinitionProperty<"info" | "success" | "warning" | "action_required", Notification, Document<unknown, {}, Notification, {
         id: string;
     }, import("mongoose").DefaultSchemaOptions> & Omit<Notification & Required<{
         _id: import("mongoose").Types.ObjectId;
@@ -72,6 +63,15 @@ export declare const NotificationSchema: import("mongoose").Schema<Notification,
         id: string;
     }> | undefined;
     metadata?: import("mongoose").SchemaDefinitionProperty<Record<string, unknown> | null | undefined, Notification, Document<unknown, {}, Notification, {
+        id: string;
+    }, import("mongoose").DefaultSchemaOptions> & Omit<Notification & Required<{
+        _id: import("mongoose").Types.ObjectId;
+    }> & {
+        __v: number;
+    }, "id"> & {
+        id: string;
+    }> | undefined;
+    title?: import("mongoose").SchemaDefinitionProperty<string, Notification, Document<unknown, {}, Notification, {
         id: string;
     }, import("mongoose").DefaultSchemaOptions> & Omit<Notification & Required<{
         _id: import("mongoose").Types.ObjectId;

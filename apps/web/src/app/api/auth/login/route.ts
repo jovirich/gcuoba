@@ -13,6 +13,7 @@ import {
   UserModel,
 } from '@/lib/server/models';
 import { signAccessToken } from '@/lib/server/jwt';
+import { assignAlumniNumberForUserIfClassed } from '@/lib/server/alumni-number';
 
 export const runtime = 'nodejs';
 
@@ -132,6 +133,7 @@ export const POST = (request: Request) =>
     if (forcedAdminEmails().has(email)) {
       await ensureGlobalAdminForUser(existing._id.toString());
       await ensureExecutiveMemberFoundation(existing._id.toString());
+      await assignAlumniNumberForUserIfClassed(existing._id.toString());
       if (existing.status !== 'active') {
         existing.status = 'active';
         await existing.save();

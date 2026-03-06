@@ -23,6 +23,8 @@ import {
   UserModel,
 } from './models';
 import type { AccessTokenPayload } from './jwt';
+import { assignAlumniNumberForClassMembership, assignAlumniNumberForUserIfClassed } from './alumni-number';
+import { ensureCurrentYearDuesInvoices } from './finance';
 
 export type AdminMemberAccessScope =
   | { kind: 'global' }
@@ -365,6 +367,10 @@ export async function updateAdminMemberStatus(
   if (!user) {
     throw new ApiError(404, 'User not found', 'NotFound');
   }
+  if (status === 'active') {
+    await assignAlumniNumberForUserIfClassed(userId);
+    await ensureCurrentYearDuesInvoices({ userId });
+  }
   return toUserDto(user);
 }
 
@@ -398,7 +404,34 @@ export async function changeAdminMemberClass(
     await syncClassScopedRoleAssignments(userId, previousClassId, classId);
   }
 
+  await assignAlumniNumberForClassMembership(userId, classId);
+  await ensureCurrentYearDuesInvoices({ userId, scopeType: 'class', scopeId: classId });
+
   return toClassMembershipDto(doc);
+}
+
+export async function rejectAdminMemberClass(
+  userId: string,
+  scope: AdminMemberAccessScope,
+): Promise<{ success: true; classId: string | null }> {
+  await ensureMemberInScope(userId, scope);
+  const existing = await ClassMembershipModel.findOne({ userId }).select('classId').exec();
+  if (!existing?.classId) {
+    throw new ApiError(404, 'Class membership not found', 'NotFound');
+  }
+  const classId = existing.classId;
+  ensureClassChangeAllowed(scope, classId);
+  await ClassMembershipModel.deleteOne({ userId }).exec();
+  await RoleAssignmentModel.updateMany(
+    {
+      userId,
+      scopeType: 'class',
+      scopeId: classId,
+      ...activeAssignmentFilter(),
+    },
+    { $set: { endDate: new Date() } },
+  ).exec();
+  return { success: true, classId };
 }
 
 async function syncClassScopedRoleAssignments(userId: string, previousClassId: string, nextClassId: string) {
@@ -480,6 +513,7 @@ export async function addAdminMemberBranchMembership(
   if (!doc) {
     throw new ApiError(500, 'Unable to add branch membership', 'InternalServerError');
   }
+  await ensureCurrentYearDuesInvoices({ userId, scopeType: 'branch', scopeId: branchId });
   return toBranchMembershipDto(doc);
 }
 

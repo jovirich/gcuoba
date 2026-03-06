@@ -51,7 +51,15 @@ function readNumber(raw: string | undefined, fallback: number): number {
 }
 
 function mailEnabled() {
+  if (brevoApiKey()) {
+    return true;
+  }
   return readBoolean(process.env.MAIL_ENABLED, false);
+}
+
+function brevoApiKey(): string | null {
+  const key = process.env.BREVO_API_KEY?.trim() || process.env.BREVO_KEY?.trim() || '';
+  return key || null;
 }
 
 function queueWorkerEnabled() {
@@ -163,7 +171,47 @@ function renderHtmlTemplate(subject: string, body: string): string {
 }
 
 async function sendEmail(to: string, subject: string, body: string) {
-  const from = process.env.MAIL_FROM || 'noreply@gcuoba.local';
+  const from =
+    process.env.MAIL_FROM ||
+    (process.env.BREVO_SENDER_EMAIL
+      ? `${process.env.BREVO_SENDER_NAME || process.env.MAIL_APP_NAME || 'GCUOBA Portal'} <${process.env.BREVO_SENDER_EMAIL}>`
+      : 'noreply@gcuoba.local');
+
+  const key = brevoApiKey();
+  if (key) {
+    const match = from.match(/^(.*)<([^>]+)>$/);
+    const senderName = match
+      ? match[1].trim().replace(/^"|"$/g, '')
+      : process.env.BREVO_SENDER_NAME || process.env.MAIL_APP_NAME || 'GCUOBA Portal';
+    const senderEmail = match
+      ? match[2].trim()
+      : process.env.BREVO_SENDER_EMAIL?.trim() || from.trim();
+
+    const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'api-key': key,
+      },
+      body: JSON.stringify({
+        sender: {
+          email: senderEmail,
+          name: senderName,
+        },
+        to: [{ email: to }],
+        subject,
+        textContent: body,
+        htmlContent: renderHtmlTemplate(subject, body),
+      }),
+    });
+    if (!response.ok) {
+      const reason = await response.text();
+      throw new ApiError(502, `Brevo send failed: ${reason || response.statusText}`, 'BadGateway');
+    }
+    return;
+  }
+
   await getTransporter().sendMail({
     from,
     to,

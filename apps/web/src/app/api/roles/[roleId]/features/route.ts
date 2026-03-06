@@ -1,8 +1,9 @@
 import type { RoleFeatureDTO } from '@gcuoba/types';
 import { Types } from 'mongoose';
+import { requireGlobalWriteAccess } from '@/lib/server/authorization';
 import { connectMongo } from '@/lib/server/mongo';
 import { withApiHandler } from '@/lib/server/route';
-import { requireAuthTokenUser } from '@/lib/server/request-auth';
+import { requireActiveAccount, requireAuthTokenUser } from '@/lib/server/request-auth';
 import { RoleFeatureModel } from '@/lib/server/models';
 import { toRoleFeatureDto } from '@/lib/server/dto-mappers';
 
@@ -15,7 +16,9 @@ type Context = {
 export const GET = (request: Request, context: Context) =>
   withApiHandler(async () => {
     await connectMongo();
-    await requireAuthTokenUser(request);
+    const authUser = await requireAuthTokenUser(request);
+    requireActiveAccount(authUser);
+    await requireGlobalWriteAccess(authUser);
     const { roleId } = await context.params;
 
     if (!Types.ObjectId.isValid(roleId)) {

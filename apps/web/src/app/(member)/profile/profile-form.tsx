@@ -5,6 +5,7 @@ import type {
   BranchMembershipDTO,
   ClassMembershipDTO,
   ClassSetDTO,
+  HouseDTO,
   ProfileDTO,
 } from '@gcuoba/types';
 import { fetchAppJson } from '@/lib/api';
@@ -27,6 +28,7 @@ type ProfileFormProps = {
   classMembership: ClassMembershipDTO | null;
   branches: BranchDTO[];
   branchMemberships: BranchMembershipDTO[];
+  houses: HouseDTO[];
 };
 
 export function ProfileForm({
@@ -39,6 +41,7 @@ export function ProfileForm({
   classMembership,
   branches,
   branchMemberships,
+  houses,
 }: ProfileFormProps) {
   const [formState, setFormState] = useState<ProfileFormState>({
     firstName: profile?.firstName ?? userName.split(' ')[0] ?? '',
@@ -57,6 +60,12 @@ export function ProfileForm({
     const excluded = new Set(branchMemberships.map((membership) => membership.branchId));
     return branches.filter((branch) => !excluded.has(branch.id));
   }, [branches, branchMemberships]);
+  const houseName = useMemo(() => {
+    if (!profile?.houseId) {
+      return 'N/A';
+    }
+    return houses.find((house) => house.id === profile.houseId)?.name ?? `House ${profile.houseId}`;
+  }, [houses, profile?.houseId]);
 
   async function handleProfileSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -167,6 +176,13 @@ export function ProfileForm({
             ))}
           </select>
         </label>
+
+        <p className="text-sm text-slate-600">
+          Current house
+          <span className="mt-1 block rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-800">
+            {houseName}
+          </span>
+        </p>
 
         <button
           type="submit"

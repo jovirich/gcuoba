@@ -70,11 +70,11 @@ export function RoleSwitcher({
 
       let scopeLabel = 'Global';
       if (scopeType === 'branch') {
-        const branchLabel = branchMap.get(scopeId ?? '') ?? scopeId ?? 'Branch';
+        const branchLabel = branchMap.get(scopeId ?? '') ?? `Branch ${scopeId ?? ''}`;
         scopeLabel = `Branch: ${branchLabel}`;
       }
       if (scopeType === 'class') {
-        const classLabel = classMap.get(scopeId ?? '') ?? scopeId ?? 'Class';
+        const classLabel = classMap.get(scopeId ?? '') ?? `Class ${scopeId ?? ''}`;
         scopeLabel = `Class: ${classLabel}`;
       }
 

@@ -1,19 +1,25 @@
 import type { UserDTO } from '@gcuoba/types';
+import { listAdminMembers, resolveAdminMemberAccessScope } from '@/lib/server/admin-members';
 import { connectMongo } from '@/lib/server/mongo';
 import { withApiHandler } from '@/lib/server/route';
-import { requireAuthTokenUser } from '@/lib/server/request-auth';
-import { UserModel } from '@/lib/server/models';
-import { toUserDto } from '@/lib/server/dto-mappers';
+import { requireActiveAccount, requireAuthTokenUser } from '@/lib/server/request-auth';
 
 export const runtime = 'nodejs';
 
 export const GET = (request: Request) =>
   withApiHandler(async () => {
     await connectMongo();
-    await requireAuthTokenUser(request);
+    const authUser = await requireAuthTokenUser(request);
+    requireActiveAccount(authUser);
 
-    const docs = await UserModel.find().select('name email phone status').exec();
-    const result: UserDTO[] = docs.map((doc) => toUserDto(doc));
+    const url = new URL(request.url);
+    const scope = await resolveAdminMemberAccessScope(
+      authUser,
+      url.searchParams.get('scopeType'),
+      url.searchParams.get('scopeId'),
+    );
+    const members = await listAdminMembers(scope);
+    const result: UserDTO[] = members.map((member) => member.user);
     return Response.json(result);
   });
 

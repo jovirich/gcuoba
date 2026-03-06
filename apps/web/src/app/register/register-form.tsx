@@ -21,11 +21,13 @@ type FormState = {
   email: string;
   password: string;
   confirmPassword: string;
+  dobDay: string;
+  dobMonth: string;
+  dobYear: string;
   classId: string;
   branchId: string;
   houseId: string;
   note: string;
-  photoUrl: string;
 };
 
 export function RegisterForm({ classes, branches, houses }: Props) {
@@ -39,12 +41,15 @@ export function RegisterForm({ classes, branches, houses }: Props) {
     email: '',
     password: '',
     confirmPassword: '',
+    dobDay: '',
+    dobMonth: '',
+    dobYear: '',
     classId: classes[0]?.id ?? '',
     branchId: branches[0]?.id ?? '',
     houseId: houses[0]?.id ?? '',
     note: '',
-    photoUrl: '',
   });
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
@@ -65,23 +70,30 @@ export function RegisterForm({ classes, branches, houses }: Props) {
 
     setSubmitting(true);
     try {
+      const payload = new FormData();
+      payload.append('title', form.title);
+      payload.append('firstName', form.firstName.trim());
+      payload.append('middleName', form.middleName.trim());
+      payload.append('lastName', form.lastName.trim());
+      payload.append('phone', form.phone.trim());
+      payload.append('email', form.email.trim().toLowerCase());
+      payload.append('password', form.password);
+      payload.append('dobDay', String(Number(form.dobDay)));
+      payload.append('dobMonth', String(Number(form.dobMonth)));
+      if (form.dobYear) {
+        payload.append('dobYear', String(Number(form.dobYear)));
+      }
+      payload.append('classId', form.classId);
+      payload.append('branchId', form.branchId);
+      payload.append('houseId', form.houseId);
+      payload.append('note', form.note.trim());
+      if (photoFile) {
+        payload.append('photo', photoFile);
+      }
+
       await fetchAppJson('/api/auth/register', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: form.title,
-          firstName: form.firstName.trim(),
-          middleName: form.middleName.trim() || undefined,
-          lastName: form.lastName.trim(),
-          phone: form.phone.trim(),
-          email: form.email.trim().toLowerCase(),
-          password: form.password,
-          classId: form.classId,
-          branchId: form.branchId,
-          houseId: form.houseId,
-          note: form.note.trim() || undefined,
-          photoUrl: form.photoUrl.trim() || undefined,
-        }),
+        body: payload,
       });
       setStatus('Registration submitted. Redirecting...');
       router.push('/register/pending');
@@ -96,8 +108,8 @@ export function RegisterForm({ classes, branches, houses }: Props) {
     <form onSubmit={handleSubmit} className="surface-card space-y-6 p-6 shadow-sm">
       <h2 className="text-xl font-semibold text-slate-900">Join the Association</h2>
       <p className="text-sm text-slate-500">
-        Complete the form below to request membership. Your preferred branch executives will review the
-        request and notify you by email once approved.
+        Complete the form below to request membership. Class and branch administrators will review your request and
+        notify you by email once approved.
       </p>
 
       {error && (
@@ -169,6 +181,47 @@ export function RegisterForm({ classes, branches, houses }: Props) {
             className="field-input"
             value={form.email}
             onChange={(event) => update('email', event.target.value)}
+          />
+        </label>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <label className="text-sm text-slate-600">
+          Birth day
+          <input
+            required
+            type="number"
+            min="1"
+            max="31"
+            className="field-input"
+            value={form.dobDay}
+            onChange={(event) => update('dobDay', event.target.value)}
+            placeholder="DD"
+          />
+        </label>
+        <label className="text-sm text-slate-600">
+          Birth month
+          <input
+            required
+            type="number"
+            min="1"
+            max="12"
+            className="field-input"
+            value={form.dobMonth}
+            onChange={(event) => update('dobMonth', event.target.value)}
+            placeholder="MM"
+          />
+        </label>
+        <label className="text-sm text-slate-600">
+          Birth year (optional)
+          <input
+            type="number"
+            min="1900"
+            max="2100"
+            className="field-input"
+            value={form.dobYear}
+            onChange={(event) => update('dobYear', event.target.value)}
+            placeholder="YYYY"
           />
         </label>
       </div>
@@ -256,12 +309,12 @@ export function RegisterForm({ classes, branches, houses }: Props) {
       </label>
 
       <label className="text-sm text-slate-600">
-        Profile photo URL (optional)
+        Profile picture (optional)
         <input
+          type="file"
+          accept="image/*"
           className="field-input"
-          value={form.photoUrl}
-          onChange={(event) => update('photoUrl', event.target.value)}
-          placeholder="https://..."
+          onChange={(event) => setPhotoFile(event.target.files?.[0] ?? null)}
         />
       </label>
 

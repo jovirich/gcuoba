@@ -6,9 +6,12 @@ import { fetchJson } from '@/lib/api';
 import { resolveScopeSelection, withScope } from '@/lib/scope-query';
 import { FinancePanel } from './panel';
 
-async function loadSummary(token: string): Promise<FinanceAdminSummaryDTO | null> {
+async function loadSummary(
+  token: string,
+  scope: { scopeType?: 'global' | 'branch' | 'class'; scopeId?: string },
+): Promise<FinanceAdminSummaryDTO | null> {
   try {
-    return await fetchJson('/finance/admin/summary', { token });
+    return await fetchJson(withScope('/finance/admin/summary', scope), { token });
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('API 403:')) {
       return null;
@@ -38,7 +41,7 @@ export default async function FinanceAdminPage({ searchParams }: FinanceAdminPag
   });
   const section = normalizeFinanceSection(params?.section);
 
-  const summary = await loadSummary(user.token);
+  const summary = await loadSummary(user.token, scope);
   if (!summary) {
     return (
       <div className="admin-page">
@@ -66,6 +69,13 @@ export default async function FinanceAdminPage({ searchParams }: FinanceAdminPag
           Need projects? Visit{' '}
           <a className="text-red-600 underline" href={withScope('/admin/projects', scope)}>
             the projects workspace
+          </a>
+          .
+        </p>
+        <p className="admin-page-subtitle">
+          Need dues broadsheet? Visit{' '}
+          <a className="text-red-600 underline" href={withScope('/admin/dues', scope)}>
+            the dues workspace
           </a>
           .
         </p>

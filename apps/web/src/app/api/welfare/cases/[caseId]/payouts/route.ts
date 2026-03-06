@@ -16,6 +16,16 @@ type Body = {
   channel?: string;
   reference?: string;
   notes?: string;
+  retainerMode?: 'none' | 'percentage' | 'fixed';
+  retainerPercentage?: number;
+  retainerAmount?: number;
+  deductions?: Array<{
+    type?: 'standard_percentage' | 'dues_invoice' | 'liability' | 'custom';
+    label?: string;
+    amount?: number;
+    percentage?: number;
+    invoiceId?: string;
+  }>;
 };
 
 export const POST = (request: Request, context: Context) =>

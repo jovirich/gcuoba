@@ -12,6 +12,8 @@ import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth-options";
 import { fetchJson } from "@/lib/api";
+import { hasGlobalAccess } from "@/lib/server/authorization";
+import { connectMongo } from "@/lib/server/mongo";
 import { RoleAssignmentsPanel } from "./role-assignments-panel";
 import { SetupPanel } from "./setup-panel";
 
@@ -25,6 +27,11 @@ export default async function SetupPage() {
     }
     if (sessionUser.status !== "active") {
         redirect("/profile?pending=1");
+    }
+    await connectMongo();
+    const globalAccess = await hasGlobalAccess(sessionUser.id);
+    if (!globalAccess) {
+        redirect("/admin");
     }
 
     const [

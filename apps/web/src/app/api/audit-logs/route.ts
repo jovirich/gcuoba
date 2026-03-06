@@ -1,5 +1,6 @@
 import type { AuditLogDTO } from '@gcuoba/types';
 import { ApiError } from '@/lib/server/api-error';
+import { requireGlobalWriteAccess } from '@/lib/server/authorization';
 import { type AuditScopeType, listAuditLogsForActor } from '@/lib/server/audit-logs';
 import { connectMongo } from '@/lib/server/mongo';
 import { withApiHandler } from '@/lib/server/route';
@@ -22,6 +23,7 @@ export const GET = (request: Request) =>
     await connectMongo();
     const authUser = await requireAuthTokenUser(request);
     requireActiveAccount(authUser);
+    await requireGlobalWriteAccess(authUser);
 
     const url = new URL(request.url);
     const rawLimit = url.searchParams.get('limit');

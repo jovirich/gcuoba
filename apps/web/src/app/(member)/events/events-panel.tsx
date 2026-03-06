@@ -3,6 +3,7 @@
 import type { EventDTO, EventParticipationDTO } from '@gcuoba/types';
 import { useMemo, useState } from 'react';
 import { fetchJson } from '@/lib/api';
+import { PaginationControls } from '@/components/ui/pagination-controls';
 
 type Props = {
   initialEvents: EventDTO[];
@@ -43,6 +44,10 @@ export function EventsPanel({ initialEvents, authToken }: Props) {
   const [busyById, setBusyById] = useState<Record<string, boolean>>({});
   const [errorById, setErrorById] = useState<Record<string, string | null>>({});
   const [successById, setSuccessById] = useState<Record<string, string | null>>({});
+  const [eventQuery, setEventQuery] = useState('');
+  const [rsvpFilter, setRsvpFilter] = useState<'all' | DraftParticipation['status']>('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(6);
   const [draftById, setDraftById] = useState<Record<string, DraftParticipation>>(() =>
     Object.fromEntries(initialEvents.map((event) => [event.id, initialDraft(event)])),
   );
@@ -56,6 +61,27 @@ export function EventsPanel({ initialEvents, authToken }: Props) {
       }),
     [events],
   );
+  const filteredEvents = useMemo(() => {
+    const query = eventQuery.trim().toLowerCase();
+    return orderedEvents.filter((event) => {
+      const myRsvp = event.myRsvp && event.myRsvp !== 'none' ? event.myRsvp : 'interested';
+      if (rsvpFilter !== 'all' && myRsvp !== rsvpFilter) {
+        return false;
+      }
+      if (!query) {
+        return true;
+      }
+      const haystack =
+        `${event.title} ${event.description ?? ''} ${event.location ?? ''} ${event.startAt ?? ''}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [eventQuery, orderedEvents, rsvpFilter]);
+  const totalPages = Math.max(1, Math.ceil(filteredEvents.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pagedEvents = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredEvents.slice(start, start + pageSize);
+  }, [currentPage, filteredEvents, pageSize]);
 
   function setDraft(eventId: string, patch: Partial<DraftParticipation>) {
     setDraftById((prev) => ({
@@ -118,7 +144,41 @@ export function EventsPanel({ initialEvents, authToken }: Props) {
 
   return (
     <section className="space-y-4">
-      {orderedEvents.map((event) => {
+      <div className="grid gap-3 md:grid-cols-3">
+        <label className="text-xs text-slate-500">
+          Search events
+          <input
+            className="field-input text-sm"
+            placeholder="Title, location, or details"
+            value={eventQuery}
+            onChange={(event) => {
+              setEventQuery(event.target.value);
+              setPage(1);
+            }}
+          />
+        </label>
+        <label className="text-xs text-slate-500">
+          RSVP filter
+          <select
+            className="field-input text-sm"
+            value={rsvpFilter}
+            onChange={(event) => {
+              setRsvpFilter(event.target.value as typeof rsvpFilter);
+              setPage(1);
+            }}
+          >
+            <option value="all">All responses</option>
+            <option value="attending">Attending</option>
+            <option value="interested">Interested</option>
+            <option value="not_attending">Not attending</option>
+          </select>
+        </label>
+        <p className="text-xs text-slate-500 md:pt-6">{filteredEvents.length} event(s)</p>
+      </div>
+      {filteredEvents.length === 0 ? (
+        <p className="text-sm text-slate-500">No events match your filters.</p>
+      ) : (
+        pagedEvents.map((event) => {
         const draft = draftById[event.id] ?? initialDraft(event);
         const busy = Boolean(busyById[event.id]);
         const error = errorById[event.id];
@@ -198,7 +258,18 @@ export function EventsPanel({ initialEvents, authToken }: Props) {
             {success && <p className="text-sm text-red-700">{success}</p>}
           </article>
         );
-      })}
+      })
+      )}
+      <PaginationControls
+        page={currentPage}
+        pageSize={pageSize}
+        total={filteredEvents.length}
+        onPageChange={setPage}
+        onPageSizeChange={(value) => {
+          setPageSize(value);
+          setPage(1);
+        }}
+      />
     </section>
   );
 }

@@ -1,6 +1,6 @@
 import type { DocumentRecordDTO } from '@gcuoba/types';
-import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { readFile, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { Types } from 'mongoose';
 import { ApiError } from './api-error';
@@ -27,6 +27,12 @@ type UploadInput = {
 };
 
 const STORAGE_ROOT = path.join(process.cwd(), 'storage', 'documents');
+const CLOUDINARY_PREFIX = 'cloudinary:';
+
+type CloudinaryAssetRef = {
+  resourceType: string;
+  publicId: string;
+};
 
 function resolveVisibility(scopeType: ScopeType, visibility?: Visibility) {
   const resolved = visibility ?? (scopeType === 'private' ? 'private' : 'scope');
@@ -47,6 +53,158 @@ function scopeFolder(scopeType: ScopeType, scopeId: string | null, actorId: stri
     throw new ApiError(400, 'scopeId is required', 'BadRequest');
   }
   return path.join(scopeType, scopeId);
+}
+
+function cloudinaryConfig() {
+  const cloudinaryUrl = process.env.CLOUDINARY_URL?.trim() || '';
+  let urlCloudName = '';
+  let urlApiKey = '';
+  let urlApiSecret = '';
+  if (cloudinaryUrl) {
+    try {
+      const parsed = new URL(cloudinaryUrl);
+      if (parsed.protocol === 'cloudinary:') {
+        urlCloudName = parsed.hostname;
+        urlApiKey = decodeURIComponent(parsed.username);
+        urlApiSecret = decodeURIComponent(parsed.password);
+      }
+    } catch {
+      // Ignore malformed CLOUDINARY_URL and rely on discrete env vars.
+    }
+  }
+  return {
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME?.trim() || urlCloudName,
+    apiKey: process.env.CLOUDINARY_API_KEY?.trim() || urlApiKey,
+    apiSecret: process.env.CLOUDINARY_API_SECRET?.trim() || urlApiSecret,
+    folder: (process.env.CLOUDINARY_FOLDER?.trim() || 'gcuoba/documents').replace(/^\/+|\/+$/g, ''),
+  };
+}
+
+function ensureCloudinaryConfigured() {
+  const config = cloudinaryConfig();
+  if (!config.cloudName || !config.apiKey || !config.apiSecret) {
+    throw new ApiError(
+      500,
+      'Cloudinary is not configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET.',
+      'ServerConfigurationError',
+    );
+  }
+  return config;
+}
+
+function cloudinarySignature(params: Record<string, string>, apiSecret: string): string {
+  const base = Object.keys(params)
+    .sort()
+    .map((key) => `${key}=${params[key]}`)
+    .join('&');
+  return createHash('sha1')
+    .update(`${base}${apiSecret}`)
+    .digest('hex');
+}
+
+function sanitizePathPart(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
+}
+
+function parseCloudinaryRef(storedName: string): CloudinaryAssetRef | null {
+  if (!storedName.startsWith(CLOUDINARY_PREFIX)) {
+    return null;
+  }
+  const payload = storedName.slice(CLOUDINARY_PREFIX.length);
+  const [resourceType, ...publicParts] = payload.split(':');
+  if (!resourceType || publicParts.length === 0) {
+    return null;
+  }
+  const publicId = publicParts.join(':');
+  return { resourceType, publicId };
+}
+
+async function uploadToCloudinary(
+  actorId: string,
+  file: UploadInput,
+  scopeType: ScopeType,
+  scopeId: string | null,
+): Promise<{ storedName: string; storagePath: string; mimeType: string; sizeBytes: number }> {
+  const config = ensureCloudinaryConfigured();
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const scopeSegment = scopeFolder(scopeType, scopeId, actorId).replace(/\\/g, '/');
+  const nameBase = path.basename(file.originalName, path.extname(file.originalName));
+  const publicId = `${scopeSegment}/${Date.now()}-${sanitizePathPart(nameBase || 'document')}-${randomUUID().slice(0, 8)}`;
+  const signature = cloudinarySignature(
+    {
+      folder: config.folder,
+      public_id: publicId,
+      timestamp,
+    },
+    config.apiSecret,
+  );
+
+  const form = new FormData();
+  form.append(
+    'file',
+    new Blob([new Uint8Array(file.buffer)], { type: file.mimeType || 'application/octet-stream' }),
+    file.originalName,
+  );
+  form.append('api_key', config.apiKey);
+  form.append('timestamp', timestamp);
+  form.append('folder', config.folder);
+  form.append('public_id', publicId);
+  form.append('signature', signature);
+
+  const response = await fetch(`https://api.cloudinary.com/v1_1/${config.cloudName}/auto/upload`, {
+    method: 'POST',
+    body: form,
+  });
+  const payload = (await response.json().catch(() => null)) as
+    | { secure_url?: string; bytes?: number; resource_type?: string; public_id?: string; format?: string; error?: { message?: string } }
+    | null;
+  if (!response.ok || !payload?.secure_url || !payload.public_id || !payload.resource_type) {
+    const reason = payload?.error?.message || response.statusText || 'Upload failed';
+    throw new ApiError(502, `Cloudinary upload failed: ${reason}`, 'BadGateway');
+  }
+
+  return {
+    storedName: `${CLOUDINARY_PREFIX}${payload.resource_type}:${payload.public_id}`,
+    storagePath: payload.secure_url,
+    mimeType: file.mimeType || 'application/octet-stream',
+    sizeBytes: payload.bytes ?? file.sizeBytes ?? file.buffer.length,
+  };
+}
+
+async function destroyCloudinaryAsset(asset: CloudinaryAssetRef): Promise<void> {
+  const config = ensureCloudinaryConfigured();
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const signature = cloudinarySignature(
+    {
+      public_id: asset.publicId,
+      timestamp,
+    },
+    config.apiSecret,
+  );
+
+  const form = new FormData();
+  form.append('api_key', config.apiKey);
+  form.append('timestamp', timestamp);
+  form.append('public_id', asset.publicId);
+  form.append('signature', signature);
+
+  const response = await fetch(
+    `https://api.cloudinary.com/v1_1/${config.cloudName}/${asset.resourceType}/destroy`,
+    {
+      method: 'POST',
+      body: form,
+    },
+  );
+  const payload = (await response.json().catch(() => null)) as
+    | { result?: string; error?: { message?: string } }
+    | null;
+  if (!response.ok) {
+    const reason = payload?.error?.message || response.statusText || 'Delete failed';
+    throw new ApiError(502, `Cloudinary delete failed: ${reason}`, 'BadGateway');
+  }
+  if (payload?.result && payload.result !== 'ok' && payload.result !== 'not found') {
+    throw new ApiError(502, `Cloudinary delete failed: ${payload.result}`, 'BadGateway');
+  }
 }
 
 async function ensureScopeExists(scopeType: 'branch' | 'class', scopeId: string) {
@@ -174,25 +332,17 @@ export async function uploadDocument(
   const normalized = await normalizeScope(actorId, payload.scopeType, payload.scopeId);
   const visibility = resolveVisibility(payload.scopeType, payload.visibility);
 
-  const folder = scopeFolder(normalized.scopeType, normalized.scopeId, actorId);
-  const absoluteFolder = path.join(STORAGE_ROOT, folder);
-  await mkdir(absoluteFolder, { recursive: true });
-
-  const extension = path.extname(file.originalName).slice(0, 12);
-  const storedName = `${Date.now()}-${randomUUID()}${extension}`;
-  const relativePath = path.join(folder, storedName);
-  const absolutePath = path.join(STORAGE_ROOT, relativePath);
-  await writeFile(absolutePath, file.buffer);
+  const uploaded = await uploadToCloudinary(actorId, file, normalized.scopeType, normalized.scopeId);
 
   const doc = await DocumentRecordModel.create({
     ownerUserId: actorId,
     scopeType: normalized.scopeType,
     scopeId: normalized.scopeId,
     originalName: file.originalName,
-    storedName,
-    storagePath: relativePath,
-    mimeType: file.mimeType || 'application/octet-stream',
-    sizeBytes: file.sizeBytes ?? file.buffer.length,
+    storedName: uploaded.storedName,
+    storagePath: uploaded.storagePath,
+    mimeType: uploaded.mimeType,
+    sizeBytes: uploaded.sizeBytes,
     visibility,
   });
 
@@ -246,8 +396,18 @@ export async function downloadDocument(actorId: string, documentId: string) {
   }
   await ensureCanRead(actorId, doc);
 
-  const absolutePath = path.join(STORAGE_ROOT, doc.storagePath);
-  const content = await readFile(absolutePath);
+  let content: Buffer;
+  const cloudAsset = parseCloudinaryRef(doc.storedName);
+  if (cloudAsset) {
+    const response = await fetch(doc.storagePath);
+    if (!response.ok) {
+      throw new ApiError(502, 'Unable to download file from Cloudinary', 'BadGateway');
+    }
+    content = Buffer.from(await response.arrayBuffer());
+  } else {
+    const absolutePath = path.join(STORAGE_ROOT, doc.storagePath);
+    content = await readFile(absolutePath);
+  }
   await recordAuditLog({
     actorUserId: actorId,
     action: 'document.downloaded',
@@ -278,13 +438,18 @@ export async function deleteDocument(actorId: string, documentId: string): Promi
   }
   await ensureCanDelete(actorId, doc);
 
-  await DocumentRecordModel.deleteOne({ _id: documentId }).exec();
-  const absolutePath = path.join(STORAGE_ROOT, doc.storagePath);
-  try {
-    await unlink(absolutePath);
-  } catch {
-    // no-op when file already removed
+  const cloudAsset = parseCloudinaryRef(doc.storedName);
+  if (cloudAsset) {
+    await destroyCloudinaryAsset(cloudAsset);
+  } else {
+    const absolutePath = path.join(STORAGE_ROOT, doc.storagePath);
+    try {
+      await unlink(absolutePath);
+    } catch {
+      // no-op when file already removed
+    }
   }
+  await DocumentRecordModel.deleteOne({ _id: documentId }).exec();
 
   await recordAuditLog({
     actorUserId: actorId,

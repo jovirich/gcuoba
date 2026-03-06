@@ -8,9 +8,10 @@ import type {
     RoleDTO,
     RoleFeatureDTO,
 } from "@gcuoba/types";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchJson } from "@/lib/api";
+import { PaginationControls } from "@/components/ui/pagination-controls";
 
 type Props = {
     branches: BranchDTO[];
@@ -94,6 +95,21 @@ export function SetupPanel({
     });
     const [activeTab, setActiveTab] = useState<ReferenceTabKey>("branches");
     const [message, setMessage] = useState<string | null>(null);
+    const [branchQuery, setBranchQuery] = useState("");
+    const [branchPage, setBranchPage] = useState(1);
+    const [branchPageSize, setBranchPageSize] = useState(10);
+    const [countryQuery, setCountryQuery] = useState("");
+    const [countryPage, setCountryPage] = useState(1);
+    const [countryPageSize, setCountryPageSize] = useState(10);
+    const [classQuery, setClassQuery] = useState("");
+    const [classPage, setClassPage] = useState(1);
+    const [classPageSize, setClassPageSize] = useState(10);
+    const [houseQuery, setHouseQuery] = useState("");
+    const [housePage, setHousePage] = useState(1);
+    const [housePageSize, setHousePageSize] = useState(10);
+    const [featureQuery, setFeatureQuery] = useState("");
+    const [featurePage, setFeaturePage] = useState(1);
+    const [featurePageSize, setFeaturePageSize] = useState(20);
 
     const resetClassForm = () =>
         setClassForm({
@@ -138,6 +154,14 @@ export function SetupPanel({
     }
 
     async function handleBranchDelete(id: string) {
+        const branchName =
+            branchList.find((item) => item.id === id)?.name ?? "this branch";
+        const proceed = window.confirm(
+            `Delete ${branchName}? This action cannot be undone.`,
+        );
+        if (!proceed) {
+            return;
+        }
         setMessage(null);
         try {
             await fetchJson(`/branches/${id}`, {
@@ -187,6 +211,14 @@ export function SetupPanel({
     }
 
     async function handleClassDelete(id: string) {
+        const classLabel =
+            classList.find((item) => item.id === id)?.label ?? "this class";
+        const proceed = window.confirm(
+            `Delete ${classLabel}? This action cannot be undone.`,
+        );
+        if (!proceed) {
+            return;
+        }
         setMessage(null);
         try {
             await fetchJson(`/classes/${id}`, {
@@ -235,6 +267,14 @@ export function SetupPanel({
     }
 
     async function handleHouseDelete(id: string) {
+        const houseName =
+            houseList.find((item) => item.id === id)?.name ?? "this house";
+        const proceed = window.confirm(
+            `Delete ${houseName}? This action cannot be undone.`,
+        );
+        if (!proceed) {
+            return;
+        }
         setMessage(null);
         try {
             await fetchJson(`/houses/${id}`, {
@@ -287,6 +327,14 @@ export function SetupPanel({
     }
 
     async function handleCountryDelete(id: string) {
+        const countryName =
+            countryList.find((item) => item.id === id)?.name ?? "this country";
+        const proceed = window.confirm(
+            `Delete ${countryName}? This action cannot be undone.`,
+        );
+        if (!proceed) {
+            return;
+        }
         setMessage(null);
         try {
             await fetchJson(`/countries/${id}`, {
@@ -305,6 +353,15 @@ export function SetupPanel({
 
     async function handleRoleFeatureChange(moduleKey: string, allowed: boolean) {
         if (!selectedRoleId) {
+            return;
+        }
+        const roleName =
+            roleList.find((role) => role.id === selectedRoleId)?.name ?? "selected role";
+        const actionLabel = allowed ? "enable" : "disable";
+        const proceed = window.confirm(
+            `Confirm ${actionLabel} access to "${moduleKey}" for ${roleName}?`,
+        );
+        if (!proceed) {
             return;
         }
         setMessage(null);
@@ -338,6 +395,87 @@ export function SetupPanel({
     );
     const selectedRoleFeatureMap = new Map(
         selectedRoleFeatures.map((feature) => [feature.moduleKey, feature]),
+    );
+
+    const filteredBranches = useMemo(() => {
+        const q = branchQuery.trim().toLowerCase();
+        if (!q) {
+            return branchList;
+        }
+        return branchList.filter(
+            (branch) =>
+                branch.name.toLowerCase().includes(q) ||
+                (branch.country ?? "").toLowerCase().includes(q),
+        );
+    }, [branchList, branchQuery]);
+    const branchPageItems = filteredBranches.slice(
+        (branchPage - 1) * branchPageSize,
+        branchPage * branchPageSize,
+    );
+
+    const filteredCountries = useMemo(() => {
+        const q = countryQuery.trim().toLowerCase();
+        if (!q) {
+            return countryList;
+        }
+        return countryList.filter(
+            (country) =>
+                country.name.toLowerCase().includes(q) ||
+                (country.isoCode ?? "").toLowerCase().includes(q),
+        );
+    }, [countryList, countryQuery]);
+    const countryPageItems = filteredCountries.slice(
+        (countryPage - 1) * countryPageSize,
+        countryPage * countryPageSize,
+    );
+
+    const filteredClasses = useMemo(() => {
+        const q = classQuery.trim().toLowerCase();
+        if (!q) {
+            return classList;
+        }
+        return classList.filter(
+            (classSet) =>
+                classSet.label.toLowerCase().includes(q) ||
+                String(classSet.entryYear).includes(q) ||
+                classSet.status.toLowerCase().includes(q),
+        );
+    }, [classList, classQuery]);
+    const classPageItems = filteredClasses.slice(
+        (classPage - 1) * classPageSize,
+        classPage * classPageSize,
+    );
+
+    const filteredHouses = useMemo(() => {
+        const q = houseQuery.trim().toLowerCase();
+        if (!q) {
+            return houseList;
+        }
+        return houseList.filter(
+            (house) =>
+                house.name.toLowerCase().includes(q) ||
+                (house.motto ?? "").toLowerCase().includes(q),
+        );
+    }, [houseList, houseQuery]);
+    const housePageItems = filteredHouses.slice(
+        (housePage - 1) * housePageSize,
+        housePage * housePageSize,
+    );
+
+    const filteredFeatureModules = useMemo(() => {
+        const q = featureQuery.trim().toLowerCase();
+        if (!q) {
+            return featureModules;
+        }
+        return featureModules.filter(
+            (module) =>
+                module.label.toLowerCase().includes(q) ||
+                module.key.toLowerCase().includes(q),
+        );
+    }, [featureModules, featureQuery]);
+    const featurePageItems = filteredFeatureModules.slice(
+        (featurePage - 1) * featurePageSize,
+        featurePage * featurePageSize,
     );
 
     return (
@@ -438,6 +576,24 @@ export function SetupPanel({
                             )}
                         </div>
                     </form>
+                    <div className="space-y-3">
+                        <div className="grid gap-3 md:grid-cols-2">
+                            <label className="text-xs text-slate-500">
+                                Search branches
+                                <input
+                                    className="field-input text-sm"
+                                    placeholder="Search by name or country"
+                                    value={branchQuery}
+                                    onChange={(event) => {
+                                        setBranchQuery(event.target.value);
+                                        setBranchPage(1);
+                                    }}
+                                />
+                            </label>
+                            <p className="text-xs text-slate-500 md:pt-6">
+                                {filteredBranches.length} record(s)
+                            </p>
+                        </div>
                     <div className="table-wrap">
                         <table className="table-base">
                             <thead className="text-xs uppercase text-slate-500">
@@ -448,7 +604,7 @@ export function SetupPanel({
                                 </tr>
                             </thead>
                             <tbody>
-                                {branchList.map((branch) => (
+                                {branchPageItems.map((branch) => (
                                     <tr
                                         key={branch.id}
                                         className="table-row"
@@ -491,6 +647,17 @@ export function SetupPanel({
                                 ))}
                             </tbody>
                         </table>
+                    </div>
+                    <PaginationControls
+                        page={branchPage}
+                        pageSize={branchPageSize}
+                        total={filteredBranches.length}
+                        onPageChange={setBranchPage}
+                        onPageSizeChange={(value) => {
+                            setBranchPageSize(value);
+                            setBranchPage(1);
+                        }}
+                    />
                     </div>
                 </div>
             </section>
@@ -562,6 +729,24 @@ export function SetupPanel({
                             )}
                         </div>
                     </form>
+                    <div className="space-y-3">
+                        <div className="grid gap-3 md:grid-cols-2">
+                            <label className="text-xs text-slate-500">
+                                Search countries
+                                <input
+                                    className="field-input text-sm"
+                                    placeholder="Search by name or ISO code"
+                                    value={countryQuery}
+                                    onChange={(event) => {
+                                        setCountryQuery(event.target.value);
+                                        setCountryPage(1);
+                                    }}
+                                />
+                            </label>
+                            <p className="text-xs text-slate-500 md:pt-6">
+                                {filteredCountries.length} record(s)
+                            </p>
+                        </div>
                     <div className="table-wrap">
                         <table className="table-base">
                             <thead className="text-xs uppercase text-slate-500">
@@ -572,7 +757,7 @@ export function SetupPanel({
                                 </tr>
                             </thead>
                             <tbody>
-                                {countryList.map((country) => (
+                                {countryPageItems.map((country) => (
                                     <tr
                                         key={country.id}
                                         className="table-row"
@@ -615,6 +800,17 @@ export function SetupPanel({
                                 ))}
                             </tbody>
                         </table>
+                    </div>
+                    <PaginationControls
+                        page={countryPage}
+                        pageSize={countryPageSize}
+                        total={filteredCountries.length}
+                        onPageChange={setCountryPage}
+                        onPageSizeChange={(value) => {
+                            setCountryPageSize(value);
+                            setCountryPage(1);
+                        }}
+                    />
                     </div>
                 </div>
             </section>
@@ -696,6 +892,24 @@ export function SetupPanel({
                             )}
                         </div>
                     </form>
+                    <div className="space-y-3">
+                        <div className="grid gap-3 md:grid-cols-2">
+                            <label className="text-xs text-slate-500">
+                                Search classes
+                                <input
+                                    className="field-input text-sm"
+                                    placeholder="Search by label, year, or status"
+                                    value={classQuery}
+                                    onChange={(event) => {
+                                        setClassQuery(event.target.value);
+                                        setClassPage(1);
+                                    }}
+                                />
+                            </label>
+                            <p className="text-xs text-slate-500 md:pt-6">
+                                {filteredClasses.length} record(s)
+                            </p>
+                        </div>
                     <div className="table-wrap">
                         <table className="table-base">
                             <thead className="text-xs uppercase text-slate-500">
@@ -707,7 +921,7 @@ export function SetupPanel({
                                 </tr>
                             </thead>
                             <tbody>
-                                {classList.map((classSet) => (
+                                {classPageItems.map((classSet) => (
                                     <tr
                                         key={classSet.id}
                                         className="table-row"
@@ -761,6 +975,17 @@ export function SetupPanel({
                                 ))}
                             </tbody>
                         </table>
+                    </div>
+                    <PaginationControls
+                        page={classPage}
+                        pageSize={classPageSize}
+                        total={filteredClasses.length}
+                        onPageChange={setClassPage}
+                        onPageSizeChange={(value) => {
+                            setClassPageSize(value);
+                            setClassPage(1);
+                        }}
+                    />
                     </div>
                 </div>
             </section>
@@ -825,6 +1050,24 @@ export function SetupPanel({
                             )}
                         </div>
                     </form>
+                    <div className="space-y-3">
+                        <div className="grid gap-3 md:grid-cols-2">
+                            <label className="text-xs text-slate-500">
+                                Search houses
+                                <input
+                                    className="field-input text-sm"
+                                    placeholder="Search by name or motto"
+                                    value={houseQuery}
+                                    onChange={(event) => {
+                                        setHouseQuery(event.target.value);
+                                        setHousePage(1);
+                                    }}
+                                />
+                            </label>
+                            <p className="text-xs text-slate-500 md:pt-6">
+                                {filteredHouses.length} record(s)
+                            </p>
+                        </div>
                     <div className="table-wrap">
                         <table className="table-base">
                             <thead className="text-xs uppercase text-slate-500">
@@ -835,7 +1078,7 @@ export function SetupPanel({
                                 </tr>
                             </thead>
                             <tbody>
-                                {houseList.map((house) => (
+                                {housePageItems.map((house) => (
                                     <tr
                                         key={house.id}
                                         className="table-row"
@@ -876,6 +1119,17 @@ export function SetupPanel({
                             </tbody>
                         </table>
                     </div>
+                    <PaginationControls
+                        page={housePage}
+                        pageSize={housePageSize}
+                        total={filteredHouses.length}
+                        onPageChange={setHousePage}
+                        onPageSizeChange={(value) => {
+                            setHousePageSize(value);
+                            setHousePage(1);
+                        }}
+                    />
+                    </div>
                 </div>
             </section>
             )}
@@ -914,6 +1168,24 @@ export function SetupPanel({
                             No roles available.
                         </p>
                     ) : (
+                        <div className="space-y-3">
+                            <div className="grid gap-3 md:grid-cols-2">
+                                <label className="text-xs text-slate-500">
+                                    Search role features
+                                    <input
+                                        className="field-input text-sm"
+                                        placeholder="Search module label or key"
+                                        value={featureQuery}
+                                        onChange={(event) => {
+                                            setFeatureQuery(event.target.value);
+                                            setFeaturePage(1);
+                                        }}
+                                    />
+                                </label>
+                                <p className="text-xs text-slate-500 md:pt-6">
+                                    {filteredFeatureModules.length} record(s)
+                                </p>
+                            </div>
                         <div className="table-wrap">
                             <table className="table-base">
                                 <thead className="text-xs uppercase text-slate-500">
@@ -924,7 +1196,7 @@ export function SetupPanel({
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {featureModules.map((module) => {
+                                    {featurePageItems.map((module) => {
                                         const feature =
                                             selectedRoleFeatureMap.get(
                                                 module.key,
@@ -979,6 +1251,17 @@ export function SetupPanel({
                                     })}
                                 </tbody>
                             </table>
+                        </div>
+                        <PaginationControls
+                            page={featurePage}
+                            pageSize={featurePageSize}
+                            total={filteredFeatureModules.length}
+                            onPageChange={setFeaturePage}
+                            onPageSizeChange={(value) => {
+                                setFeaturePageSize(value);
+                                setFeaturePage(1);
+                            }}
+                        />
                         </div>
                     )}
                 </div>

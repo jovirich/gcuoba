@@ -7,7 +7,8 @@ import type {
   NotificationEmailWorkerStatusDTO,
 } from '@gcuoba/types';
 import { fetchJson } from '@/lib/api';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { PaginationControls } from '@/components/ui/pagination-controls';
 
 type NotificationsQueuePanelProps = {
   initialStats: NotificationEmailQueueStatsDTO;
@@ -28,6 +29,9 @@ export function NotificationsQueuePanel({
   const [jobs, setJobs] = useState(initialJobs);
   const [workerStatus, setWorkerStatus] = useState(initialWorkerStatus);
   const [status, setStatus] = useState<JobStatusFilter>('');
+  const [query, setQuery] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   const [loading, setLoading] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -37,6 +41,35 @@ export function NotificationsQueuePanel({
     () => jobs.filter((job) => job.status === 'pending').length,
     [jobs],
   );
+  const filteredJobs = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) {
+      return jobs;
+    }
+    return jobs.filter((job) => {
+      return (
+        job.toEmail.toLowerCase().includes(normalizedQuery) ||
+        job.subject.toLowerCase().includes(normalizedQuery) ||
+        job.status.toLowerCase().includes(normalizedQuery)
+      );
+    });
+  }, [jobs, query]);
+
+  const pagedJobs = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredJobs.slice(start, start + pageSize);
+  }, [filteredJobs, page, pageSize]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query, status]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(filteredJobs.length / pageSize));
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [filteredJobs.length, page, pageSize]);
 
   async function refresh() {
     setLoading(true);
@@ -187,8 +220,20 @@ export function NotificationsQueuePanel({
             {processing ? 'Running worker...' : 'Run worker now'}
           </button>
         </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <label className="text-xs text-slate-500">
+            Search current queue rows
+            <input
+              className="field-input text-sm"
+              placeholder="Search recipient, subject, or status"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </label>
+          <p className="text-xs text-slate-500 md:pt-6">{filteredJobs.length} record(s)</p>
+        </div>
 
-        {jobs.length === 0 ? (
+        {filteredJobs.length === 0 ? (
           <p className="mt-3 text-sm text-slate-500">No queue records found.</p>
         ) : (
           <div className="table-wrap">
@@ -204,7 +249,7 @@ export function NotificationsQueuePanel({
                 </tr>
               </thead>
               <tbody>
-                {jobs.map((job) => (
+                {pagedJobs.map((job) => (
                   <tr key={job.id} className="table-row">
                     <td className="py-2 text-xs text-slate-500">{new Date(job.createdAt).toLocaleString()}</td>
                     <td className="py-2">{job.toEmail}</td>
@@ -230,6 +275,16 @@ export function NotificationsQueuePanel({
             </table>
           </div>
         )}
+        <PaginationControls
+          page={page}
+          pageSize={pageSize}
+          total={filteredJobs.length}
+          onPageChange={setPage}
+          onPageSizeChange={(value) => {
+            setPageSize(value);
+            setPage(1);
+          }}
+        />
       </section>
     </section>
   );

@@ -1,7 +1,7 @@
 import type { BranchDTO, ClassSetDTO, EventDTO } from '@gcuoba/types';
 import { getServerSession } from 'next-auth';
 import { redirect } from 'next/navigation';
-import { fetchJson } from '@/lib/api';
+import { fetchJson, isApiErrorStatus } from '@/lib/api';
 import { authOptions } from '@/lib/auth-options';
 import { resolveScopeSelection, withScope } from '@/lib/scope-query';
 import { EventsPanel } from './panel';
@@ -27,12 +27,30 @@ export default async function AdminEventsPage({ searchParams }: AdminEventsPageP
     scopeType: params?.scopeType,
     scopeId: params?.scopeId,
   });
+  const branchesPath =
+    scope.scopeType === 'class'
+      ? '/branches?managedOnly=1'
+      : withScope('/branches', scope);
+  const classesPath =
+    scope.scopeType === 'branch'
+      ? '/classes?managedOnly=1'
+      : withScope('/classes', scope);
 
-  const [events, branches, classes] = await Promise.all([
-    fetchJson<EventDTO[]>(withScope('/events', scope), { token: sessionUser.token }),
-    fetchJson<BranchDTO[]>('/branches', { token: sessionUser.token }),
-    fetchJson<ClassSetDTO[]>('/classes', { token: sessionUser.token }),
-  ]);
+  let events: EventDTO[];
+  let branches: BranchDTO[];
+  let classes: ClassSetDTO[];
+  try {
+    [events, branches, classes] = await Promise.all([
+      fetchJson<EventDTO[]>(withScope('/events', scope), { token: sessionUser.token }),
+      fetchJson<BranchDTO[]>(branchesPath, { token: sessionUser.token }),
+      fetchJson<ClassSetDTO[]>(classesPath, { token: sessionUser.token }),
+    ]);
+  } catch (error) {
+    if (isApiErrorStatus(error, 403)) {
+      redirect('/admin');
+    }
+    throw error;
+  }
 
   return (
     <div className="admin-page">

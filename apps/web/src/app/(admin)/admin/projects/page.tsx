@@ -3,16 +3,19 @@ import { getServerSession } from 'next-auth';
 import { redirect } from 'next/navigation';
 import { authOptions } from '@/lib/auth-options';
 import { fetchJson } from '@/lib/api';
-import { resolveScopeSelection } from '@/lib/scope-query';
+import { resolveScopeSelection, withScope } from '@/lib/scope-query';
 import { FinancePanel } from '../finance/panel';
 
 type ProjectsPageProps = {
   searchParams?: Promise<{ scopeType?: string; scopeId?: string }>;
 };
 
-async function loadSummary(token: string): Promise<FinanceAdminSummaryDTO | null> {
+async function loadSummary(
+  token: string,
+  scope: { scopeType?: 'global' | 'branch' | 'class'; scopeId?: string },
+): Promise<FinanceAdminSummaryDTO | null> {
   try {
-    return await fetchJson('/finance/admin/summary', { token });
+    return await fetchJson(withScope('/finance/admin/summary', scope), { token });
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('API 403:')) {
       return null;
@@ -37,7 +40,7 @@ export default async function ProjectsPage({ searchParams }: ProjectsPageProps) 
     scopeId: params?.scopeId,
   });
 
-  const summary = await loadSummary(user.token);
+  const summary = await loadSummary(user.token, scope);
   if (!summary) {
     return (
       <div className="admin-page">

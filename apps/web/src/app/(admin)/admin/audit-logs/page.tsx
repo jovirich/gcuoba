@@ -4,6 +4,8 @@ import { redirect } from 'next/navigation';
 import { authOptions } from '@/lib/auth-options';
 import { fetchJson } from '@/lib/api';
 import { buildScopeParams, resolveScopeSelection } from '@/lib/scope-query';
+import { hasGlobalAccess } from '@/lib/server/authorization';
+import { connectMongo } from '@/lib/server/mongo';
 import { AuditLogsPanel } from './panel';
 
 type AuditLogsAdminPageProps = {
@@ -19,6 +21,11 @@ export default async function AuditLogsAdminPage({ searchParams }: AuditLogsAdmi
 
   if (user.status !== 'active') {
     redirect('/profile?pending=1');
+  }
+  await connectMongo();
+  const globalAccess = await hasGlobalAccess(user.id);
+  if (!globalAccess) {
+    redirect('/admin');
   }
 
   const params = searchParams ? await searchParams : undefined;

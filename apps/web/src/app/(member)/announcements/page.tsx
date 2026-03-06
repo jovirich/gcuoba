@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { redirect } from 'next/navigation';
 import { authOptions } from '@/lib/auth-options';
 import { fetchJson } from '@/lib/api';
+import { AnnouncementsPanel } from './panel';
 
 export default async function MemberAnnouncementsPage() {
   const session = await getServerSession(authOptions);
@@ -22,21 +23,7 @@ export default async function MemberAnnouncementsPage() {
         <h1 className="member-page-title">Announcements</h1>
         <p className="member-page-subtitle">Association notices and updates for members.</p>
       </header>
-      <section className="space-y-4">
-        {announcements.length === 0 ? (
-          <p className="text-sm text-slate-500">No announcements available.</p>
-        ) : (
-          announcements.map((announcement) => (
-            <article key={announcement.id} className="surface-card p-4">
-              <h2 className="text-lg font-semibold text-slate-900">{announcement.title}</h2>
-              <p className="text-xs text-slate-500">
-                {announcement.publishedAt ? new Date(announcement.publishedAt).toLocaleString() : 'Posted recently'}
-              </p>
-              <p className="mt-2 text-sm text-slate-700">{announcement.body}</p>
-            </article>
-          ))
-        )}
-      </section>
+      <AnnouncementsPanel announcements={announcements} />
     </main>
   );
 }

@@ -56,7 +56,6 @@ export default async function MemberDashboardPage() {
   const branchMap = new Map(summary.branches.map((branch) => [branch.id, branch]));
   const classMap = new Map(classes.map((classSet) => [classSet.id, classSet]));
   const memberClass = summary.classMembership ? classMap.get(summary.classMembership.classId) : null;
-  const approvedBranchMemberships = branchMemberships.filter((membership) => membership.status === 'approved');
   const primaryTotals = duesSummary.totalsByCurrency[duesSummary.primaryCurrency] ?? {
     due: 0,
     paid: 0,
@@ -80,6 +79,9 @@ export default async function MemberDashboardPage() {
           </Link>
           <Link className="btn-secondary" href="/documents">
             Documents
+          </Link>
+          <Link className="btn-secondary" href="/dues">
+            Dues
           </Link>
           <Link className="btn-secondary" href="/profile">
             Profile
@@ -109,22 +111,30 @@ export default async function MemberDashboardPage() {
         </div>
 
         <div className="surface-card p-4">
-          <p className="text-xs uppercase text-slate-500">Branch details</p>
+          <p className="text-xs uppercase text-slate-500">Active welfare appeals</p>
           <h2 className="mt-1 text-lg font-semibold text-slate-900">
-            {approvedBranchMemberships.length > 0
-              ? `${approvedBranchMemberships.length} approved branch${approvedBranchMemberships.length > 1 ? 'es' : ''}`
-              : 'No approved branch yet'}
+            {summary.welfareCases.length > 0
+              ? `${summary.welfareCases.length} active appeal${summary.welfareCases.length > 1 ? 's' : ''}`
+              : 'No active appeals'}
           </h2>
           <p className="text-sm text-slate-500">
-            Global updates and announcements will always appear in your feed.
+            Current welfare requests available to members in your scope.
           </p>
-          <ul className="mt-3 space-y-1 text-sm text-slate-700">
-            {branchMemberships.slice(0, 3).map((membership) => (
-              <li key={membership.id}>
-                {branchMap.get(membership.branchId)?.name ?? membership.branchId} - {membership.status}
+          <ul className="mt-3 space-y-2">
+            {summary.welfareCases.slice(0, 3).map((wcase) => (
+              <li key={wcase.id} className="rounded-xl border border-red-50 bg-red-50/40 p-3">
+                <p className="text-sm font-semibold text-slate-900">{wcase.title}</p>
+                <p className="text-xs text-slate-500 line-clamp-2">{wcase.description}</p>
+                <p className="text-xs text-slate-500">
+                  Target: {wcase.targetAmount.toLocaleString()} {wcase.currency}
+                </p>
               </li>
             ))}
-            {branchMemberships.length === 0 && <li>No branch membership records yet.</li>}
+            {summary.welfareCases.length === 0 && (
+              <li className="rounded-xl border border-dashed border-slate-200 p-3 text-sm text-slate-500">
+                No active welfare appeals at the moment.
+              </li>
+            )}
           </ul>
         </div>
       </section>
@@ -259,7 +269,9 @@ export default async function MemberDashboardPage() {
           {branchMemberships.map((membership) => (
             <li key={membership.id} className="rounded-xl border border-slate-100 p-3">
               <div className="flex items-center justify-between text-sm">
-                <span className="font-semibold text-slate-900">{branchMap.get(membership.branchId)?.name ?? membership.branchId}</span>
+                <span className="font-semibold text-slate-900">
+                  {branchMap.get(membership.branchId)?.name ?? `Branch ${membership.branchId}`}
+                </span>
                 <span
                   className={`rounded-full px-3 py-1 text-xs font-semibold ${
                     membership.status === 'approved'
@@ -277,23 +289,6 @@ export default async function MemberDashboardPage() {
           ))}
         </ul>
       </section>
-
-      {summary.welfareCases.length > 0 && (
-        <section className="rounded-2xl border border-red-100 bg-white p-4">
-          <h2 className="text-lg font-semibold text-red-900">Active welfare appeals</h2>
-          <ul className="mt-3 space-y-2">
-            {summary.welfareCases.map((wcase) => (
-              <li key={wcase.id} className="rounded-xl border border-red-50 bg-red-50/40 p-3">
-                <p className="text-sm font-semibold text-slate-900">{wcase.title}</p>
-                <p className="text-xs text-slate-500 line-clamp-2">{wcase.description}</p>
-                <p className="text-xs text-slate-500">
-                  Target: {wcase.targetAmount.toLocaleString()} {wcase.currency}
-                </p>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
 
       <section className="surface-card p-4">
         <h2 className="text-lg font-semibold text-slate-900">Announcements</h2>

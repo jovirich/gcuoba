@@ -3,6 +3,7 @@ import type {
   BranchMembershipDTO,
   ClassMembershipDTO,
   ClassSetDTO,
+  HouseDTO,
   ProfileDTO,
 } from '@gcuoba/types';
 import { fetchAppJson, fetchJson } from '@/lib/api';
@@ -12,15 +13,16 @@ import { redirect } from 'next/navigation';
 import { ProfileForm } from './profile-form';
 
 async function loadProfileData(userId: string, token: string) {
-  const [profile, classes, memberships, branches, classMembership] = await Promise.all([
+  const [profile, classes, memberships, branches, classMembership, houses] = await Promise.all([
     fetchAppJson<ProfileDTO | null>(`/api/profiles/${userId}`, { token }),
     fetchJson<ClassSetDTO[]>(`/classes`, { token }),
     fetchAppJson<BranchMembershipDTO[]>(`/api/memberships/branches/${userId}`, { token }),
     fetchJson<BranchDTO[]>(`/branches`, { token }),
     fetchAppJson<ClassMembershipDTO | null>(`/api/memberships/class/${userId}`, { token }),
+    fetchJson<HouseDTO[]>(`/houses`, { token }),
   ]);
 
-  return { profile, classes, memberships, branches, classMembership };
+  return { profile, classes, memberships, branches, classMembership, houses };
 }
 
 export default async function ProfilePage() {
@@ -54,6 +56,7 @@ export default async function ProfilePage() {
         branches={data.branches}
         branchMemberships={data.memberships}
         classMembership={data.classMembership}
+        houses={data.houses}
       />
     </main>
   );

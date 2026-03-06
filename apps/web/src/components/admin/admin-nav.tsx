@@ -22,6 +22,7 @@ const navItems: AdminNavItem[] = [
       pathname.startsWith('/admin/finance') &&
       !pathname.startsWith('/admin/finance/ledger'),
   },
+  { href: '/admin/dues', label: 'Dues', hint: 'Member dues broadsheet' },
   {
     href: '/admin/projects',
     label: 'Projects',

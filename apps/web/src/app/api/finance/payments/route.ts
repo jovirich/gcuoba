@@ -8,10 +8,15 @@ export const runtime = 'nodejs';
 
 type RecordPaymentBody = {
   invoiceId?: string;
+  invoiceApplications?: Array<{ invoiceId?: string; amount?: number }>;
+  payerUserId?: string;
   amount?: number;
+  currency?: string;
   channel?: string;
   reference?: string;
   notes?: string;
+  scopeType?: 'global' | 'branch' | 'class';
+  scopeId?: string | null;
 };
 
 export const GET = (request: Request) =>

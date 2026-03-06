@@ -2,7 +2,7 @@ import type { BranchExecutiveSummaryDTO } from '@gcuoba/types';
 import { getServerSession } from 'next-auth';
 import { redirect } from 'next/navigation';
 import { authOptions } from '@/lib/auth-options';
-import { fetchJson } from '@/lib/api';
+import { fetchJson, isApiErrorStatus } from '@/lib/api';
 import { BranchExecutivePanel } from './panel';
 
 async function loadSummary(userId: string, token: string): Promise<BranchExecutiveSummaryDTO> {
@@ -20,7 +20,15 @@ export default async function BranchExecutivePage() {
     redirect('/profile?pending=1');
   }
 
-  const summary = await loadSummary(user.id, user.token);
+  let summary: BranchExecutiveSummaryDTO;
+  try {
+    summary = await loadSummary(user.id, user.token);
+  } catch (error) {
+    if (isApiErrorStatus(error, 403)) {
+      redirect('/admin');
+    }
+    throw error;
+  }
 
   return (
     <div className="admin-page">

@@ -4,6 +4,7 @@ import type { BranchExecutiveSummaryDTO } from '@gcuoba/types';
 import { useRouter } from 'next/navigation';
 import { type FormEvent, useState } from 'react';
 import { fetchJson } from '@/lib/api';
+import { PaginationControls } from '@/components/ui/pagination-controls';
 
 type Props = {
   userId: string;
@@ -15,6 +16,9 @@ export function BranchExecutivePanel({ userId, summary, authToken }: Props) {
   const router = useRouter();
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [processing, setProcessing] = useState<string | null>(null);
+  const [requestQueryByBranch, setRequestQueryByBranch] = useState<Record<string, string>>({});
+  const [requestPageByBranch, setRequestPageByBranch] = useState<Record<string, number>>({});
+  const [requestPageSizeByBranch, setRequestPageSizeByBranch] = useState<Record<string, number>>({});
   const [handoverProcessing, setHandoverProcessing] = useState(false);
   const [handover, setHandover] = useState({
     branchId: summary.branches[0]?.id ?? '',
@@ -25,6 +29,11 @@ export function BranchExecutivePanel({ userId, summary, authToken }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   async function handleDecision(membershipId: string, action: 'approve' | 'reject') {
+    const actionLabel = action === 'approve' ? 'approve' : 'reject';
+    const proceed = window.confirm(`Are you sure you want to ${actionLabel} this branch membership request?`);
+    if (!proceed) {
+      return;
+    }
     setProcessing(membershipId);
     setError(null);
     try {
@@ -89,53 +98,100 @@ export function BranchExecutivePanel({ userId, summary, authToken }: Props) {
               {branch.country ?? 'No country specified'} &middot; {branch.pendingRequests.length} pending request(s)
             </p>
           </header>
+          {(() => {
+            const query = (requestQueryByBranch[branch.id] ?? '').trim().toLowerCase();
+            const filteredRequests = branch.pendingRequests.filter((request) => {
+              if (!query) {
+                return true;
+              }
+              return `${request.memberName ?? ''} ${request.memberEmail ?? ''} ${request.status}`
+                .toLowerCase()
+                .includes(query);
+            });
+            const pageSize = requestPageSizeByBranch[branch.id] ?? 8;
+            const totalPages = Math.max(1, Math.ceil(filteredRequests.length / pageSize));
+            const currentPage = Math.min(requestPageByBranch[branch.id] ?? 1, totalPages);
+            const start = (currentPage - 1) * pageSize;
+            const pagedRequests = filteredRequests.slice(start, start + pageSize);
 
-          {branch.pendingRequests.length === 0 && (
-            <p className="text-sm text-slate-500">No pending requests for this branch.</p>
-          )}
-
-          <ul className="space-y-3">
-            {branch.pendingRequests.map((request) => (
-              <li key={request.id} className="rounded-xl border border-slate-100 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-900">{request.memberName ?? request.userId}</p>
-                    <p className="text-xs text-slate-500">{request.memberEmail ?? 'No email on file'}</p>
-                    <p className="text-xs text-slate-400">
-                      Requested {request.requestedAt ? new Date(request.requestedAt).toLocaleString() : 'recently'}
-                    </p>
-                  </div>
-                  <div className="text-xs uppercase text-slate-500">{request.status}</div>
+            return (
+              <>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="text-xs text-slate-500">
+                    Search requests
+                    <input
+                      className="field-input text-sm"
+                      placeholder="Search member or status"
+                      value={requestQueryByBranch[branch.id] ?? ''}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setRequestQueryByBranch((prev) => ({ ...prev, [branch.id]: value }));
+                        setRequestPageByBranch((prev) => ({ ...prev, [branch.id]: 1 }));
+                      }}
+                    />
+                  </label>
+                  <p className="text-xs text-slate-500 md:pt-6">{filteredRequests.length} record(s)</p>
                 </div>
 
-                <textarea
-                  className="field-input mt-3 text-sm"
-                  placeholder="Optional note"
-                  value={notes[request.id] ?? ''}
-                  onChange={(event) => setNotes((prev) => ({ ...prev, [request.id]: event.target.value }))}
+                {filteredRequests.length === 0 && (
+                  <p className="text-sm text-slate-500">No pending requests for this branch.</p>
+                )}
+
+                <ul className="space-y-3">
+                  {pagedRequests.map((request) => (
+                    <li key={request.id} className="rounded-xl border border-slate-100 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">{request.memberName ?? 'Unknown member'}</p>
+                          <p className="text-xs text-slate-500">{request.memberEmail ?? 'No email on file'}</p>
+                          <p className="text-xs text-slate-400">
+                            Requested {request.requestedAt ? new Date(request.requestedAt).toLocaleString() : 'recently'}
+                          </p>
+                        </div>
+                        <div className="text-xs uppercase text-slate-500">{request.status}</div>
+                      </div>
+
+                      <textarea
+                        className="field-input mt-3 text-sm"
+                        placeholder="Optional note"
+                        value={notes[request.id] ?? ''}
+                        onChange={(event) => setNotes((prev) => ({ ...prev, [request.id]: event.target.value }))}
+                      />
+
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="btn-primary disabled:opacity-50"
+                          onClick={() => handleDecision(request.id, 'approve')}
+                          disabled={processing === request.id}
+                        >
+                          Approve
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-pill border-rose-200 bg-rose-50 text-rose-700 disabled:opacity-50"
+                          onClick={() => handleDecision(request.id, 'reject')}
+                          disabled={processing === request.id}
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                <PaginationControls
+                  page={currentPage}
+                  pageSize={pageSize}
+                  total={filteredRequests.length}
+                  onPageChange={(value) => setRequestPageByBranch((prev) => ({ ...prev, [branch.id]: value }))}
+                  onPageSizeChange={(value) => {
+                    setRequestPageSizeByBranch((prev) => ({ ...prev, [branch.id]: value }));
+                    setRequestPageByBranch((prev) => ({ ...prev, [branch.id]: 1 }));
+                  }}
                 />
-
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    className="btn-primary disabled:opacity-50"
-                    onClick={() => handleDecision(request.id, 'approve')}
-                    disabled={processing === request.id}
-                  >
-                    Approve
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-pill border-rose-200 bg-rose-50 text-rose-700 disabled:opacity-50"
-                    onClick={() => handleDecision(request.id, 'reject')}
-                    disabled={processing === request.id}
-                  >
-                    Reject
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
+              </>
+            );
+          })()}
         </section>
       ))}
 

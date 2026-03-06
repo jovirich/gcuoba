@@ -38,15 +38,6 @@ export declare const EventSchema: import("mongoose").Schema<DashboardEvent, impo
     }, "id"> & {
         id: string;
     }> | undefined;
-    status?: import("mongoose").SchemaDefinitionProperty<"draft" | "published" | "cancelled", DashboardEvent, Document<unknown, {}, DashboardEvent, {
-        id: string;
-    }, import("mongoose").DefaultSchemaOptions> & Omit<DashboardEvent & Required<{
-        _id: import("mongoose").Types.ObjectId;
-    }> & {
-        __v: number;
-    }, "id"> & {
-        id: string;
-    }> | undefined;
     description?: import("mongoose").SchemaDefinitionProperty<string | null | undefined, DashboardEvent, Document<unknown, {}, DashboardEvent, {
         id: string;
     }, import("mongoose").DefaultSchemaOptions> & Omit<DashboardEvent & Required<{
@@ -66,6 +57,15 @@ export declare const EventSchema: import("mongoose").Schema<DashboardEvent, impo
         id: string;
     }> | undefined;
     scopeId?: import("mongoose").SchemaDefinitionProperty<string | null | undefined, DashboardEvent, Document<unknown, {}, DashboardEvent, {
+        id: string;
+    }, import("mongoose").DefaultSchemaOptions> & Omit<DashboardEvent & Required<{
+        _id: import("mongoose").Types.ObjectId;
+    }> & {
+        __v: number;
+    }, "id"> & {
+        id: string;
+    }> | undefined;
+    status?: import("mongoose").SchemaDefinitionProperty<"draft" | "published" | "cancelled", DashboardEvent, Document<unknown, {}, DashboardEvent, {
         id: string;
     }, import("mongoose").DefaultSchemaOptions> & Omit<DashboardEvent & Required<{
         _id: import("mongoose").Types.ObjectId;

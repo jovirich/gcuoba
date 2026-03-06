@@ -33,15 +33,6 @@ export declare const ClassSetSchema: import("mongoose").Schema<ClassSet, import(
     }, "id"> & {
         id: string;
     }> | undefined;
-    status?: import("mongoose").SchemaDefinitionProperty<"active" | "inactive", ClassSet, Document<unknown, {}, ClassSet, {
-        id: string;
-    }, import("mongoose").DefaultSchemaOptions> & Omit<ClassSet & Required<{
-        _id: import("mongoose").Types.ObjectId;
-    }> & {
-        __v: number;
-    }, "id"> & {
-        id: string;
-    }> | undefined;
     label?: import("mongoose").SchemaDefinitionProperty<string, ClassSet, Document<unknown, {}, ClassSet, {
         id: string;
     }, import("mongoose").DefaultSchemaOptions> & Omit<ClassSet & Required<{
@@ -52,6 +43,15 @@ export declare const ClassSetSchema: import("mongoose").Schema<ClassSet, import(
         id: string;
     }> | undefined;
     entryYear?: import("mongoose").SchemaDefinitionProperty<number, ClassSet, Document<unknown, {}, ClassSet, {
+        id: string;
+    }, import("mongoose").DefaultSchemaOptions> & Omit<ClassSet & Required<{
+        _id: import("mongoose").Types.ObjectId;
+    }> & {
+        __v: number;
+    }, "id"> & {
+        id: string;
+    }> | undefined;
+    status?: import("mongoose").SchemaDefinitionProperty<"active" | "inactive", ClassSet, Document<unknown, {}, ClassSet, {
         id: string;
     }, import("mongoose").DefaultSchemaOptions> & Omit<ClassSet & Required<{
         _id: import("mongoose").Types.ObjectId;

@@ -45,6 +45,7 @@ export function toUserDto(doc: UserDoc): UserDTO {
     name: doc.name,
     email: doc.email.toLowerCase(),
     phone: doc.phone ?? null,
+    alumniNumber: doc.alumniNumber ?? null,
     status: doc.status,
   };
 }

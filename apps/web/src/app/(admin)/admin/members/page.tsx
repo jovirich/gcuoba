@@ -1,8 +1,8 @@
-import type { AdminMemberDTO, BranchDTO, ClassSetDTO, RoleDTO } from "@gcuoba/types";
+import type { AdminMemberDTO, BranchDTO, ClassSetDTO, HouseDTO, RoleDTO } from "@gcuoba/types";
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth-options";
-import { fetchJson } from "@/lib/api";
+import { fetchJson, isApiErrorStatus } from "@/lib/api";
 import { MemberManagementPanel } from "./member-management-panel";
 
 type ScopeType = "global" | "branch" | "class";
@@ -29,12 +29,25 @@ export default async function MembersManagementPage({
     const scopeId = params?.scopeId?.trim() || undefined;
     const scopedMembersPath = buildScopedPath("/admin/members", scopeType, scopeId);
 
-    const [members, branches, classes, roles] = await Promise.all([
-        fetchJson<AdminMemberDTO[]>(scopedMembersPath, { token: user.token }),
-        fetchJson<BranchDTO[]>("/branches", { token: user.token }),
-        fetchJson<ClassSetDTO[]>("/classes", { token: user.token }),
-        fetchJson<RoleDTO[]>("/roles", { token: user.token }),
-    ]);
+    let members: AdminMemberDTO[];
+    let branches: BranchDTO[];
+    let classes: ClassSetDTO[];
+    let roles: RoleDTO[];
+    let houses: HouseDTO[];
+    try {
+        [members, branches, classes, roles, houses] = await Promise.all([
+            fetchJson<AdminMemberDTO[]>(scopedMembersPath, { token: user.token }),
+            fetchJson<BranchDTO[]>("/branches", { token: user.token }),
+            fetchJson<ClassSetDTO[]>("/classes", { token: user.token }),
+            fetchJson<RoleDTO[]>("/roles", { token: user.token }),
+            fetchJson<HouseDTO[]>("/houses", { token: user.token }),
+        ]);
+    } catch (error) {
+        if (isApiErrorStatus(error, 403)) {
+            redirect("/admin");
+        }
+        throw error;
+    }
 
     return (
         <div className="admin-page space-y-8">
@@ -42,7 +55,7 @@ export default async function MembersManagementPage({
                 <p className="admin-page-kicker">Member management</p>
                 <h1 className="admin-page-title">Member lifecycle & assignments</h1>
                 <p className="admin-page-subtitle">
-                    View profiles, approve or suspend members, change class membership, and assign executive roles from one
+                    View profiles, approve or suspend members, reject class membership where needed, and assign executive roles from one
                     centralized console.
                 </p>
             </header>
@@ -50,6 +63,7 @@ export default async function MembersManagementPage({
                 members={members}
                 branches={branches}
                 classes={classes}
+                houses={houses}
                 roles={roles}
                 authToken={user.token}
                 activeScopeType={scopeType}

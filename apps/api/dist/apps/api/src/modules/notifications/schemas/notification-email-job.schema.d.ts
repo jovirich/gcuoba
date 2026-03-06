@@ -30,6 +30,15 @@ export declare const NotificationEmailJobSchema: import("mongoose").Schema<Notif
 }, "id"> & {
     id: string;
 }, {
+    userId?: import("mongoose").SchemaDefinitionProperty<string, NotificationEmailJob, Document<unknown, {}, NotificationEmailJob, {
+        id: string;
+    }, import("mongoose").DefaultSchemaOptions> & Omit<NotificationEmailJob & Required<{
+        _id: import("mongoose").Types.ObjectId;
+    }> & {
+        __v: number;
+    }, "id"> & {
+        id: string;
+    }> | undefined;
     _id?: import("mongoose").SchemaDefinitionProperty<import("mongoose").Types.ObjectId, NotificationEmailJob, Document<unknown, {}, NotificationEmailJob, {
         id: string;
     }, import("mongoose").DefaultSchemaOptions> & Omit<NotificationEmailJob & Required<{
@@ -49,15 +58,6 @@ export declare const NotificationEmailJobSchema: import("mongoose").Schema<Notif
         id: string;
     }> | undefined;
     notificationId?: import("mongoose").SchemaDefinitionProperty<string | null | undefined, NotificationEmailJob, Document<unknown, {}, NotificationEmailJob, {
-        id: string;
-    }, import("mongoose").DefaultSchemaOptions> & Omit<NotificationEmailJob & Required<{
-        _id: import("mongoose").Types.ObjectId;
-    }> & {
-        __v: number;
-    }, "id"> & {
-        id: string;
-    }> | undefined;
-    userId?: import("mongoose").SchemaDefinitionProperty<string, NotificationEmailJob, Document<unknown, {}, NotificationEmailJob, {
         id: string;
     }, import("mongoose").DefaultSchemaOptions> & Omit<NotificationEmailJob & Required<{
         _id: import("mongoose").Types.ObjectId;

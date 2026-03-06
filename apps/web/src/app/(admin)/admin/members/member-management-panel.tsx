@@ -1,18 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
     AdminMemberDTO,
     BranchDTO,
     BranchMembershipDTO,
     ClassMembershipDTO,
     ClassSetDTO,
+    HouseDTO,
     MemberStatus,
     RoleAssignmentDTO,
     RoleDTO,
     UserDTO,
 } from "@gcuoba/types";
 import { fetchJson } from "@/lib/api";
+import { PaginationControls } from "@/components/ui/pagination-controls";
 
 type TabKey = "profile" | "roles" | "actions";
 type ScopeType = "global" | "branch" | "class";
@@ -21,6 +23,7 @@ type Props = {
     members: AdminMemberDTO[];
     branches: BranchDTO[];
     classes: ClassSetDTO[];
+    houses: HouseDTO[];
     roles: RoleDTO[];
     authToken: string;
     activeScopeType?: ScopeType;
@@ -43,6 +46,7 @@ export function MemberManagementPanel({
     members: initialMembers,
     branches,
     classes,
+    houses,
     roles,
     authToken,
     activeScopeType,
@@ -51,6 +55,8 @@ export function MemberManagementPanel({
     const [members, setMembers] = useState(initialMembers);
     const [selectedMemberId, setSelectedMemberId] = useState(initialMembers[0]?.user.id ?? "");
     const [search, setSearch] = useState("");
+    const [membersPage, setMembersPage] = useState(1);
+    const [membersPageSize, setMembersPageSize] = useState(20);
     const [tab, setTab] = useState<TabKey>("profile");
     const [message, setMessage] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -77,7 +83,26 @@ export function MemberManagementPanel({
 
     const branchMap = useMemo(() => new Map(branches.map((branch) => [branch.id, branch.name])), [branches]);
     const classMap = useMemo(() => new Map(classes.map((classSet) => [classSet.id, classSet.label])), [classes]);
+    const houseMap = useMemo(() => new Map(houses.map((house) => [house.id, house.name])), [houses]);
     const roleNameMap = useMemo(() => new Map(roles.map((role) => [role.code, role.name])), [roles]);
+    const resolveBranchLabel = useCallback((branchId?: string | null) => {
+        if (!branchId) {
+            return "N/A";
+        }
+        return branchMap.get(branchId) ?? `Branch ${branchId}`;
+    }, [branchMap]);
+    const resolveClassLabel = useCallback((classId?: string | null) => {
+        if (!classId) {
+            return "N/A";
+        }
+        return classMap.get(classId) ?? `Class ${classId}`;
+    }, [classMap]);
+    const resolveHouseLabel = useCallback((houseId?: string | null) => {
+        if (!houseId) {
+            return "N/A";
+        }
+        return houseMap.get(houseId) ?? `House ${houseId}`;
+    }, [houseMap]);
     const activeScopeLabel = useMemo(() => {
         if (!activeScopeType) {
             return null;
@@ -86,10 +111,10 @@ export function MemberManagementPanel({
             return "Global";
         }
         if (activeScopeType === "branch") {
-            return `Branch: ${branchMap.get(activeScopeId ?? "") ?? activeScopeId ?? "unknown"}`;
+            return `Branch: ${resolveBranchLabel(activeScopeId ?? "")}`;
         }
-        return `Class: ${classMap.get(activeScopeId ?? "") ?? activeScopeId ?? "unknown"}`;
-    }, [activeScopeId, activeScopeType, branchMap, classMap]);
+        return `Class: ${resolveClassLabel(activeScopeId ?? "")}`;
+    }, [activeScopeId, activeScopeType, resolveBranchLabel, resolveClassLabel]);
 
     const rolesByScope = useMemo(() => {
         const grouped: Record<ScopeType, RoleDTO[]> = { global: [], branch: [], class: [] };
@@ -192,6 +217,22 @@ export function MemberManagementPanel({
         filteredMembers[0] ??
         members[0] ??
         undefined;
+
+    const pagedMembers = useMemo(() => {
+        const start = (membersPage - 1) * membersPageSize;
+        return filteredMembers.slice(start, start + membersPageSize);
+    }, [filteredMembers, membersPage, membersPageSize]);
+
+    useEffect(() => {
+        setMembersPage(1);
+    }, [search]);
+
+    useEffect(() => {
+        const totalPages = Math.max(1, Math.ceil(filteredMembers.length / membersPageSize));
+        if (membersPage > totalPages) {
+            setMembersPage(totalPages);
+        }
+    }, [filteredMembers.length, membersPage, membersPageSize]);
 
     useEffect(() => {
         setClassChoice(selectedMember?.classMembership?.classId ?? classes[0]?.id ?? "");
@@ -321,6 +362,10 @@ export function MemberManagementPanel({
         if (!selectedMember) {
             return;
         }
+        if (effectiveScopeType === "class") {
+            setError("Branch membership updates are not allowed in class scope.");
+            return;
+        }
         if (membership.status === "ended") {
             return;
         }
@@ -364,6 +409,11 @@ export function MemberManagementPanel({
         if (!selectedMember || !classChoice) {
             return;
         }
+        const className = classMap.get(classChoice) ?? "selected class";
+        const proceed = window.confirm(`Move ${selectedMember.user.name} to ${className}?`);
+        if (!proceed) {
+            return;
+        }
         const previousClassId = selectedMember.classMembership?.classId ?? null;
         try {
             setClassLoading(true);
@@ -394,6 +444,48 @@ export function MemberManagementPanel({
                 }),
             }));
             setMessage("Class membership updated.");
+        } catch (err) {
+            setError(extractError(err));
+        } finally {
+            setClassLoading(false);
+        }
+    };
+
+    const handleClassReject = async () => {
+        if (!selectedMember || !selectedMember.classMembership?.classId) {
+            setError("Member has no class membership to reject.");
+            return;
+        }
+        const className =
+            classMap.get(selectedMember.classMembership.classId) ?? "their current class";
+        const proceed = window.confirm(
+            `Reject ${selectedMember.user.name} from ${className}? This removes class membership and class-scoped roles.`,
+        );
+        if (!proceed) {
+            return;
+        }
+        try {
+            setClassLoading(true);
+            setMessage(null);
+            setError(null);
+            const result = await fetchJson<{ success: boolean; classId?: string | null }>(buildScopedAdminMembersPath(
+                `/admin/members/${selectedMember.user.id}/class`,
+                activeScopeType,
+                activeScopeId ?? undefined,
+            ), {
+                method: "DELETE",
+                token: authToken,
+            });
+            updateMember(selectedMember.user.id, (member) => ({
+                ...member,
+                classMembership: null,
+                roleAssignments: member.roleAssignments.filter(
+                    (assignment) =>
+                        assignment.scopeType !== "class" ||
+                        assignment.scopeId !== (result.classId ?? undefined),
+                ),
+            }));
+            setMessage("Class membership rejected.");
         } catch (err) {
             setError(extractError(err));
         } finally {
@@ -480,7 +572,7 @@ export function MemberManagementPanel({
             <section className="surface-card p-4 shadow-sm">
                 <div className="flex items-center justify-between">
                     <h2 className="text-lg font-semibold text-slate-900">Members</h2>
-                    <span className="text-xs uppercase tracking-[0.2em] text-red-700">{members.length} total</span>
+                    <span className="text-xs uppercase tracking-[0.2em] text-red-700">{filteredMembers.length} total</span>
                 </div>
                 <label className="block pt-4 text-sm text-slate-600">
                     Search
@@ -492,7 +584,7 @@ export function MemberManagementPanel({
                     />
                 </label>
                 <div className="mt-4 flex max-h-[520px] flex-col gap-2 overflow-y-auto">
-                    {filteredMembers.map((member) => (
+                    {pagedMembers.map((member) => (
                         <button
                             key={member.user.id}
                             type="button"
@@ -518,6 +610,16 @@ export function MemberManagementPanel({
                         </button>
                     ))}
                 </div>
+                <PaginationControls
+                    page={membersPage}
+                    pageSize={membersPageSize}
+                    total={filteredMembers.length}
+                    onPageChange={setMembersPage}
+                    onPageSizeChange={(value) => {
+                        setMembersPageSize(value);
+                        setMembersPage(1);
+                    }}
+                />
             </section>
 
             <section className="space-y-4">
@@ -543,7 +645,9 @@ export function MemberManagementPanel({
                         <div className="rounded-2xl border border-slate-100 p-4">
                             <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Class</p>
                             <p className="text-sm text-slate-900">
-                                {classMap.get(selectedMember.classMembership?.classId ?? "") ?? "None"}
+                                {selectedMember.classMembership?.classId
+                                    ? resolveClassLabel(selectedMember.classMembership.classId)
+                                    : "None"}
                             </p>
                         </div>
                         <div className="rounded-2xl border border-slate-100 p-4">
@@ -552,7 +656,7 @@ export function MemberManagementPanel({
                                 {(() => {
                                     const approvedBranches = selectedMember.branchMemberships
                                         .filter((branch) => branch.status === "approved")
-                                        .map((branch) => branchMap.get(branch.branchId) ?? "Branch");
+                                        .map((branch) => resolveBranchLabel(branch.branchId));
                                     return approvedBranches.length ? approvedBranches.join(", ") : "Pending";
                                 })()}
                             </p>
@@ -598,7 +702,12 @@ export function MemberManagementPanel({
                                 <p><span className="font-semibold">Date of birth:</span> {formatDob(selectedMember.profile)}</p>
                                 <p><span className="font-semibold">Sex:</span> {selectedMember.profile?.sex ?? "N/A"}</p>
                                 <p><span className="font-semibold">Occupation:</span> {selectedMember.profile?.occupation ?? "N/A"}</p>
-                                <p><span className="font-semibold">House ID:</span> {selectedMember.profile?.houseId ?? "N/A"}</p>
+                                <p>
+                                    <span className="font-semibold">House:</span>{" "}
+                                    {selectedMember.profile?.houseId
+                                        ? resolveHouseLabel(selectedMember.profile.houseId)
+                                        : "N/A"}
+                                </p>
                             </div>
                             <div className="rounded-2xl border border-slate-100 p-3">
                                 <p><span className="font-semibold">State of origin:</span> {selectedMember.profile?.stateOfOrigin ?? "N/A"}</p>
@@ -619,7 +728,7 @@ export function MemberManagementPanel({
                                         >
                                             <div className="text-sm text-slate-700">
                                                 <p className="font-medium">
-                                                    {branchMap.get(membership.branchId) ?? membership.branchId}
+                                                    {resolveBranchLabel(membership.branchId)}
                                                 </p>
                                                 <p className="text-xs text-slate-500">
                                                     Status: {capitalize(membership.status)} |
@@ -627,14 +736,16 @@ export function MemberManagementPanel({
                                                     {membership.endedAt ? ` | Ended: ${formatDateOrFallback(membership.endedAt)}` : ""}
                                                 </p>
                                             </div>
-                                            <button
-                                                type="button"
-                                                className="btn-pill border-rose-200 bg-rose-50 text-rose-700 disabled:opacity-70"
-                                                onClick={() => handleEndBranchMembership(membership)}
-                                                disabled={membership.status === "ended" || endingBranchId === membership.id}
-                                            >
-                                                {endingBranchId === membership.id ? "Ending..." : membership.status === "ended" ? "Ended" : "End membership"}
-                                            </button>
+                                            {effectiveScopeType !== "class" && (
+                                                <button
+                                                    type="button"
+                                                    className="btn-pill border-rose-200 bg-rose-50 text-rose-700 disabled:opacity-70"
+                                                    onClick={() => handleEndBranchMembership(membership)}
+                                                    disabled={membership.status === "ended" || endingBranchId === membership.id}
+                                                >
+                                                    {endingBranchId === membership.id ? "Ending..." : membership.status === "ended" ? "Ended" : "End membership"}
+                                                </button>
+                                            )}
                                         </div>
                                     ))
                                 )}
@@ -701,6 +812,14 @@ export function MemberManagementPanel({
                                     onClick={() => handleStatusChange("suspended")}
                                 >
                                     Suspend
+                                </button>
+                                <button
+                                    type="button"
+                                    className="btn-pill border-rose-300 bg-rose-100 text-rose-800 disabled:opacity-70"
+                                    disabled={classLoading || !selectedMember.classMembership?.classId}
+                                    onClick={handleClassReject}
+                                >
+                                    Reject class
                                 </button>
                             </div>
                         </div>
@@ -892,6 +1011,31 @@ function formatResidence(profile: AdminMemberDTO["profile"]) {
 
 function extractError(error: unknown) {
     if (error instanceof Error) {
+        const match = error.message.match(/^API\s+(\d+):\s*(.*)$/i);
+        if (!match) {
+            return error.message;
+        }
+        const statusCode = Number(match[1]);
+        const payload = match[2]?.trim();
+        if (payload) {
+            try {
+                const parsed = JSON.parse(payload) as { message?: string };
+                if (parsed?.message) {
+                    if (
+                        statusCode === 403 &&
+                        parsed.message.toLowerCase().includes("branch updates require branch or global scope")
+                    ) {
+                        return "Branch membership updates are only available in branch or global scope.";
+                    }
+                    return parsed.message;
+                }
+            } catch {
+                // fall through to generic message
+            }
+        }
+        if (statusCode === 403) {
+            return "You are not authorized to perform this action in the active scope.";
+        }
         return error.message;
     }
     return "Unable to complete the request.";

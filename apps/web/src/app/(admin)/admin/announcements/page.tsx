@@ -1,7 +1,7 @@
 import type { AnnouncementDTO, BranchDTO, ClassSetDTO } from '@gcuoba/types';
 import { getServerSession } from 'next-auth';
 import { redirect } from 'next/navigation';
-import { fetchJson } from '@/lib/api';
+import { fetchJson, isApiErrorStatus } from '@/lib/api';
 import { authOptions } from '@/lib/auth-options';
 import { resolveScopeSelection, withScope } from '@/lib/scope-query';
 import { AnnouncementsPanel } from './panel';
@@ -27,14 +27,32 @@ export default async function AdminAnnouncementsPage({ searchParams }: AdminAnno
     scopeType: params?.scopeType,
     scopeId: params?.scopeId,
   });
+  const branchesPath =
+    scope.scopeType === 'class'
+      ? '/branches?managedOnly=1'
+      : withScope('/branches', scope);
+  const classesPath =
+    scope.scopeType === 'branch'
+      ? '/classes?managedOnly=1'
+      : withScope('/classes', scope);
 
-  const [announcements, branches, classes] = await Promise.all([
-    fetchJson<AnnouncementDTO[]>(withScope('/announcements', scope), {
-      token: sessionUser.token,
-    }),
-    fetchJson<BranchDTO[]>('/branches', { token: sessionUser.token }),
-    fetchJson<ClassSetDTO[]>('/classes', { token: sessionUser.token }),
-  ]);
+  let announcements: AnnouncementDTO[];
+  let branches: BranchDTO[];
+  let classes: ClassSetDTO[];
+  try {
+    [announcements, branches, classes] = await Promise.all([
+      fetchJson<AnnouncementDTO[]>(withScope('/announcements', scope), {
+        token: sessionUser.token,
+      }),
+      fetchJson<BranchDTO[]>(branchesPath, { token: sessionUser.token }),
+      fetchJson<ClassSetDTO[]>(classesPath, { token: sessionUser.token }),
+    ]);
+  } catch (error) {
+    if (isApiErrorStatus(error, 403)) {
+      redirect('/admin');
+    }
+    throw error;
+  }
 
   return (
     <div className="admin-page">

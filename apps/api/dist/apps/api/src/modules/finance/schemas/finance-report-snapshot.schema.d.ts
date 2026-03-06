@@ -42,7 +42,16 @@ export declare const FinanceReportSnapshotSchema: import("mongoose").Schema<Fina
     }, "id"> & {
         id: string;
     }> | undefined;
-    period?: import("mongoose").SchemaDefinitionProperty<string, FinanceReportSnapshot, Document<unknown, {}, FinanceReportSnapshot, {
+    scopeType?: import("mongoose").SchemaDefinitionProperty<"global" | "branch" | "class", FinanceReportSnapshot, Document<unknown, {}, FinanceReportSnapshot, {
+        id: string;
+    }, import("mongoose").DefaultSchemaOptions> & Omit<FinanceReportSnapshot & Required<{
+        _id: import("mongoose").Types.ObjectId;
+    }> & {
+        __v: number;
+    }, "id"> & {
+        id: string;
+    }> | undefined;
+    scopeId?: import("mongoose").SchemaDefinitionProperty<string | null | undefined, FinanceReportSnapshot, Document<unknown, {}, FinanceReportSnapshot, {
         id: string;
     }, import("mongoose").DefaultSchemaOptions> & Omit<FinanceReportSnapshot & Required<{
         _id: import("mongoose").Types.ObjectId;
@@ -60,25 +69,16 @@ export declare const FinanceReportSnapshotSchema: import("mongoose").Schema<Fina
     }, "id"> & {
         id: string;
     }> | undefined;
+    period?: import("mongoose").SchemaDefinitionProperty<string, FinanceReportSnapshot, Document<unknown, {}, FinanceReportSnapshot, {
+        id: string;
+    }, import("mongoose").DefaultSchemaOptions> & Omit<FinanceReportSnapshot & Required<{
+        _id: import("mongoose").Types.ObjectId;
+    }> & {
+        __v: number;
+    }, "id"> & {
+        id: string;
+    }> | undefined;
     month?: import("mongoose").SchemaDefinitionProperty<number, FinanceReportSnapshot, Document<unknown, {}, FinanceReportSnapshot, {
-        id: string;
-    }, import("mongoose").DefaultSchemaOptions> & Omit<FinanceReportSnapshot & Required<{
-        _id: import("mongoose").Types.ObjectId;
-    }> & {
-        __v: number;
-    }, "id"> & {
-        id: string;
-    }> | undefined;
-    scopeType?: import("mongoose").SchemaDefinitionProperty<"global" | "branch" | "class", FinanceReportSnapshot, Document<unknown, {}, FinanceReportSnapshot, {
-        id: string;
-    }, import("mongoose").DefaultSchemaOptions> & Omit<FinanceReportSnapshot & Required<{
-        _id: import("mongoose").Types.ObjectId;
-    }> & {
-        __v: number;
-    }, "id"> & {
-        id: string;
-    }> | undefined;
-    scopeId?: import("mongoose").SchemaDefinitionProperty<string | null | undefined, FinanceReportSnapshot, Document<unknown, {}, FinanceReportSnapshot, {
         id: string;
     }, import("mongoose").DefaultSchemaOptions> & Omit<FinanceReportSnapshot & Required<{
         _id: import("mongoose").Types.ObjectId;

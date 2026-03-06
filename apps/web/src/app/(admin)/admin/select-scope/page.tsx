@@ -67,10 +67,10 @@ function buildScopeOptions(
 
     let label = 'Global';
     if (scopeType === 'branch') {
-      label = `Branch: ${branchMap.get(scopeId ?? '') ?? scopeId ?? 'Branch'}`;
+      label = `Branch: ${branchMap.get(scopeId ?? '') ?? `Branch ${scopeId ?? ''}`}`;
     }
     if (scopeType === 'class') {
-      label = `Class: ${classMap.get(scopeId ?? '') ?? scopeId ?? 'Class'}`;
+      label = `Class: ${classMap.get(scopeId ?? '') ?? `Class ${scopeId ?? ''}`}`;
     }
 
     grouped.set(id, {

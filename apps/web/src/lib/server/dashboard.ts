@@ -29,6 +29,7 @@ import {
   type PaymentDoc,
 } from './models';
 import { managedBranchIds, managedClassIds } from './authorization';
+import { ensureCurrentYearDuesInvoices } from './finance';
 
 function emptyTotals(): CurrencyTotalsDTO {
   return { due: 0, paid: 0, balance: 0 };
@@ -370,6 +371,7 @@ async function listEventsForUser(branchIds: string[], classId: string | null) {
 }
 
 export async function buildDashboardSummary(userId: string): Promise<DashboardSummaryDTO> {
+  await ensureCurrentYearDuesInvoices({ userId });
   const [userDoc, branches, branchMemberships, classMembership, outstandingInvoices, welfareCases, duesSummary] =
     await Promise.all([
       UserModel.findById(userId).select('name email phone status').exec(),

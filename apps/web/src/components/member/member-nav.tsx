@@ -13,6 +13,7 @@ const memberNavItems: MemberNavItem[] = [
   { href: '/profile', label: 'Profile' },
   { href: '/notifications', label: 'Notifications' },
   { href: '/documents', label: 'Documents' },
+  { href: '/dues', label: 'Dues' },
   { href: '/events', label: 'Events' },
   { href: '/announcements', label: 'Announcements' },
 ];

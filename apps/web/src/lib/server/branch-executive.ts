@@ -19,6 +19,7 @@ import {
 } from './models';
 import { createNotificationForUser } from './notifications';
 import { hasClassMembership } from './roles';
+import { ensureCurrentYearDuesInvoices } from './finance';
 
 function activeAssignmentFilter() {
   return {
@@ -187,6 +188,11 @@ export async function approveBranchMembership(
   membership.approvedBy = actorId;
   membership.note = note ?? membership.note;
   await membership.save();
+  await ensureCurrentYearDuesInvoices({
+    userId: membership.userId,
+    scopeType: 'branch',
+    scopeId: membership.branchId,
+  });
 
   const branch = await BranchModel.findById(membership.branchId).select('name').lean<{ name?: string }>().exec();
   await createNotificationForUser(membership.userId, {
