@@ -10,7 +10,7 @@ type LoginFormProps = {
 
 export function LoginForm({ portal }: LoginFormProps) {
   const title = portal === 'admin' ? 'Executive sign in' : 'Member sign in';
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
 
@@ -19,7 +19,7 @@ export function LoginForm({ portal }: LoginFormProps) {
     setError(null);
     const targetUrl = portal === 'admin' ? '/admin/select-scope?next=/admin' : '/dashboard';
     const result = await signIn('credentials', {
-      email,
+      identifier,
       password,
       callbackUrl: targetUrl,
       redirect: false,
@@ -45,12 +45,12 @@ export function LoginForm({ portal }: LoginFormProps) {
         </p>
         {error ? <p className="rounded-lg border border-rose-200 bg-rose-50 p-2 text-sm text-rose-700">{error}</p> : null}
         <div>
-          <label className="text-sm text-slate-700">Email</label>
+          <label className="text-sm text-slate-700">Email or phone</label>
           <input
-            type="email"
+            type="text"
             className="auth-input"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            value={identifier}
+            onChange={(e) => setIdentifier(e.target.value)}
             required
           />
         </div>

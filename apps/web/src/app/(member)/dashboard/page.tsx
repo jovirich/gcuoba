@@ -24,6 +24,49 @@ async function getClasses(): Promise<ClassSetDTO[]> {
   return docs.map((doc) => toClassDto(doc));
 }
 
+function getOutstandingAmount(invoice: DashboardSummaryDTO['outstandingInvoices'][number]) {
+  if (typeof invoice.balance === 'number') {
+    return invoice.balance;
+  }
+  return invoice.amount;
+}
+
+function groupOutstandingInvoices(invoices: DashboardSummaryDTO['outstandingInvoices']) {
+  const groups = new Map<
+    string,
+    {
+      key: string;
+      title: string;
+      currency: string;
+      totalAmount: number;
+      invoices: DashboardSummaryDTO['outstandingInvoices'];
+    }
+  >();
+
+  for (const invoice of invoices) {
+    const title = invoice.scheme?.title?.trim() || 'Dues invoice';
+    const currency = invoice.currency || 'NGN';
+    const key = `${title}::${currency}`;
+    const existing = groups.get(key);
+
+    if (existing) {
+      existing.totalAmount += getOutstandingAmount(invoice);
+      existing.invoices.push(invoice);
+      continue;
+    }
+
+    groups.set(key, {
+      key,
+      title,
+      currency,
+      totalAmount: getOutstandingAmount(invoice),
+      invoices: [invoice],
+    });
+  }
+
+  return Array.from(groups.values()).sort((left, right) => right.totalAmount - left.totalAmount);
+}
+
 export default async function MemberDashboardPage() {
   const session = await getServerSession(authOptions);
   const sessionUser = session?.user as { id?: string; status?: string; token?: string } | undefined;
@@ -56,6 +99,7 @@ export default async function MemberDashboardPage() {
   const branchMap = new Map(summary.branches.map((branch) => [branch.id, branch]));
   const classMap = new Map(classes.map((classSet) => [classSet.id, classSet]));
   const memberClass = summary.classMembership ? classMap.get(summary.classMembership.classId) : null;
+  const groupedOutstanding = groupOutstandingInvoices(outstanding);
   const primaryTotals = duesSummary.totalsByCurrency[duesSummary.primaryCurrency] ?? {
     due: 0,
     paid: 0,
@@ -70,27 +114,6 @@ export default async function MemberDashboardPage() {
         <h1 className="member-page-title">{summary.user?.name ?? 'Member dashboard'}</h1>
         <p className="member-page-subtitle">Overview of dues, branch status, welfare, and updates.</p>
       </header>
-
-      <section className="surface-card p-4">
-        <h2 className="text-lg font-semibold text-slate-900">Quick actions</h2>
-        <div className="mt-3 flex flex-wrap gap-3 text-sm">
-          <Link className="btn-secondary" href="/notifications">
-            Notifications
-          </Link>
-          <Link className="btn-secondary" href="/documents">
-            Documents
-          </Link>
-          <Link className="btn-secondary" href="/dues">
-            Dues
-          </Link>
-          <Link className="btn-secondary" href="/profile">
-            Profile
-          </Link>
-          <Link className="btn-secondary" href="/events">
-            Events
-          </Link>
-        </div>
-      </section>
 
       <section className="grid gap-4 lg:grid-cols-2">
         <div className="surface-card p-4">
@@ -224,70 +247,97 @@ export default async function MemberDashboardPage() {
         </div>
       </section>
 
-      {outstanding.length > 0 && (
-        <section className="rounded-2xl border border-rose-100 bg-rose-50 p-4">
-          <div className="flex items-center justify-between">
+      <section className="grid gap-4 lg:grid-cols-2">
+        {outstanding.length > 0 && (
+          <section className="rounded-2xl border border-rose-100 bg-rose-50 p-4">
+            <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold text-rose-900">Outstanding dues</h2>
             <Link className="text-sm font-medium text-rose-800 underline" href="/profile">
-              Update profile to change class/branch
+              Update profile and branch details
+            </Link>
+          </div>
+            <p className="mt-2 text-xs text-rose-700">
+              {outstanding.length} invoice{outstanding.length === 1 ? '' : 's'} grouped into {groupedOutstanding.length}{' '}
+              dues bucket{groupedOutstanding.length === 1 ? '' : 's'}.
+            </p>
+            <div className="mt-3 space-y-2">
+              {groupedOutstanding.map((group) => (
+                <details key={group.key} className="rounded-xl border border-rose-100 bg-white/80">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-3">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900 underline decoration-2 underline-offset-2">
+                        {group.title}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {group.invoices.length} invoice{group.invoices.length === 1 ? '' : 's'}
+                      </p>
+                    </div>
+                    <p className="text-sm font-semibold text-rose-700">
+                      {group.totalAmount.toLocaleString()} {group.currency}
+                    </p>
+                  </summary>
+                  <ul className="space-y-2 border-t border-rose-100 px-3 py-3">
+                    {group.invoices.map((invoice) => (
+                      <li key={invoice.id} className="rounded-lg border border-rose-100 bg-white p-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                              {invoice.periodStart ? new Date(invoice.periodStart).toLocaleDateString() : 'Pending period'}
+                            </p>
+                            <p className="text-xs text-slate-500">Status: {invoice.status.replace('_', ' ')}</p>
+                          </div>
+                          <p className="text-sm font-semibold text-rose-700">
+                            {getOutstandingAmount(invoice).toLocaleString()} {invoice.currency}
+                          </p>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ))}
+            </div>
+          </section>
+        )}
+
+        <section className={`surface-card p-4 ${outstanding.length === 0 ? 'lg:col-span-2' : ''}`}>
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Branch memberships</h2>
+              <p className="text-xs text-slate-500">Track approvals and request additional branches.</p>
+            </div>
+            <Link className="text-sm font-medium text-red-600" href="/profile">
+              Manage profile
             </Link>
           </div>
           <ul className="mt-3 space-y-2">
-            {outstanding.map((invoice) => (
-              <li key={invoice.id} className="rounded-xl border border-rose-100 bg-white/70 p-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-900">{invoice.scheme?.title ?? 'Dues invoice'}</p>
-                    <p className="text-xs text-slate-500">{invoice.periodStart ? new Date(invoice.periodStart).toLocaleDateString() : 'Pending period'}</p>
-                  </div>
-                  <p className="text-sm font-semibold text-rose-700">
-                    {invoice.amount.toLocaleString()} {invoice.currency}
-                  </p>
+            {branchMemberships.length === 0 && (
+              <li className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">
+                No branch memberships yet. Use the profile page to request one.
+              </li>
+            )}
+            {branchMemberships.map((membership) => (
+              <li key={membership.id} className="rounded-xl border border-slate-100 p-3">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-semibold text-slate-900">
+                    {branchMap.get(membership.branchId)?.name ?? `Branch ${membership.branchId}`}
+                  </span>
+                  <span
+                    className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                      membership.status === 'approved'
+                        ? 'bg-red-100 text-red-800'
+                        : membership.status === 'requested'
+                        ? 'bg-amber-100 text-amber-800'
+                        : 'bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    {membership.status}
+                  </span>
                 </div>
+                {membership.note ? <p className="mt-1 text-xs text-slate-500">{membership.note}</p> : null}
               </li>
             ))}
           </ul>
         </section>
-      )}
-
-      <section className="surface-card p-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-900">Branch memberships</h2>
-            <p className="text-xs text-slate-500">Track approvals and request additional branches.</p>
-          </div>
-          <Link className="text-sm font-medium text-red-600" href="/profile">
-            Manage profile
-          </Link>
-        </div>
-        <ul className="mt-3 space-y-2">
-          {branchMemberships.length === 0 && (
-            <li className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">
-              No branch memberships yet. Use the profile page to request one.
-            </li>
-          )}
-          {branchMemberships.map((membership) => (
-            <li key={membership.id} className="rounded-xl border border-slate-100 p-3">
-              <div className="flex items-center justify-between text-sm">
-                <span className="font-semibold text-slate-900">
-                  {branchMap.get(membership.branchId)?.name ?? `Branch ${membership.branchId}`}
-                </span>
-                <span
-                  className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                    membership.status === 'approved'
-                      ? 'bg-red-100 text-red-800'
-                      : membership.status === 'requested'
-                      ? 'bg-amber-100 text-amber-800'
-                      : 'bg-slate-100 text-slate-700'
-                  }`}
-                >
-                  {membership.status}
-                </span>
-              </div>
-              {membership.note ? <p className="mt-1 text-xs text-slate-500">{membership.note}</p> : null}
-            </li>
-          ))}
-        </ul>
       </section>
 
       <section className="surface-card p-4">

@@ -11,7 +11,7 @@ export const authOptions: NextAuthOptions = {
     Credentials({
       name: 'Credentials',
       credentials: {
-        email: { label: 'Email', type: 'email' },
+        identifier: { label: 'Email or phone', type: 'text' },
         password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials) {
@@ -19,10 +19,16 @@ export const authOptions: NextAuthOptions = {
           return null;
         }
 
+        const identifier = `${credentials.identifier ?? ''}`.trim();
+        const password = `${credentials.password ?? ''}`;
+        if (!identifier || !password) {
+          return null;
+        }
+
         const res = await fetch(buildAppUrl('/api/auth/login'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(credentials),
+          body: JSON.stringify({ identifier, password }),
         });
 
         if (!res.ok) {

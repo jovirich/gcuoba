@@ -2,7 +2,7 @@ import { withApiHandler } from '@/lib/server/route';
 import { ApiError } from '@/lib/server/api-error';
 import { connectMongo } from '@/lib/server/mongo';
 import { toClassMembershipDto } from '@/lib/server/dto-mappers';
-import { ClassMembershipModel } from '@/lib/server/models';
+import { ClassMembershipModel, UserModel } from '@/lib/server/models';
 import { ensureSelfAccess, requireAuthTokenUser } from '@/lib/server/request-auth';
 import { assignAlumniNumberForClassMembership } from '@/lib/server/alumni-number';
 import { ensureCurrentYearDuesInvoices } from '@/lib/server/finance';
@@ -41,9 +41,30 @@ export const PUT = (request: Request, context: Context) =>
       throw new ApiError(400, 'classId is required', 'BadRequest');
     }
 
+    const [existingMembership, user] = await Promise.all([
+      ClassMembershipModel.findOne({ userId }).exec(),
+      UserModel.findById(userId).exec(),
+    ]);
+
+    if (!user) {
+      throw new ApiError(404, 'User not found', 'NotFound');
+    }
+
+    const classLocked = user.status !== 'pending' && Boolean(existingMembership?.classId);
+    if (classLocked && existingMembership?.classId !== classId) {
+      throw new ApiError(
+        403,
+        'Class updates are locked after approval. Contact an administrator to change class assignment.',
+        'Forbidden',
+      );
+    }
+
+    const joinedAt =
+      existingMembership?.classId === classId ? existingMembership?.joinedAt ?? new Date() : new Date();
+
     const membership = await ClassMembershipModel.findOneAndUpdate(
       { userId },
-      { userId, classId, joinedAt: new Date() },
+      { userId, classId, joinedAt },
       { new: true, upsert: true, setDefaultsOnInsert: true },
     ).exec();
 

@@ -16,7 +16,7 @@ cp apps/api/.env.example apps/api/.env     # update MONGODB_URI / JWT_SECRET / P
 cp apps/web/.env.local.example apps/web/.env.local  # set NEXT_PUBLIC_API_BASE_URL / NEXTAUTH_SECRET
 npm install
 npm run dev:api    # starts NestJS in watch mode (default http://localhost:4000)
-npm run dev:web    # starts Next.js dev server on http://localhost:3000
+npm run dev:web    # starts Next.js dev server on http://localhost:<web-port>
 ```
 
 ### Seeding demo data
@@ -34,7 +34,7 @@ The seed command now creates:
   - `member@example.com` / `password` &rarr; pending member with a Lagos join request + unpaid invoice
 - Roles, role assignments, and branch membership records so the branch executive queue has data
 
-After seeding, start both apps, sign in at `http://localhost:3000/login`, and:
+After seeding, start both apps, sign in at `http://localhost:<web-port>/login`, and:
 
 1. Use the member account to view the `/member/dashboard` experience.
 2. Use the executive account to open `/admin/branch-executive` and approve/reject the pending request.

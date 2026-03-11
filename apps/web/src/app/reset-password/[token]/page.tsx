@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useParams, useSearchParams } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { buildAppUrl } from '@/lib/api';
 
@@ -11,6 +11,7 @@ type ResetPasswordResponse = {
 
 export default function ResetPasswordPage() {
   const params = useParams<{ token: string }>();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const token = params.token;
   const initialEmail = useMemo(() => searchParams.get('email') ?? '', [searchParams]);
@@ -44,6 +45,9 @@ export default function ResetPasswordPage() {
         throw new Error(data.message || 'Unable to reset password.');
       }
       setMessage(data.message);
+      window.setTimeout(() => {
+        router.replace('/login');
+      }, 800);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to reset password.');
     } finally {

@@ -212,9 +212,7 @@ export class AuthService {
                 usedAt: null,
             });
 
-            const appUrl =
-                this.configService.get<string>('MAIL_APP_URL') ??
-                'http://localhost:3000';
+            const appUrl = this.resolveMailAppUrl();
             resetUrl = `${appUrl.replace(/\/$/, '')}/reset-password/${token}?email=${encodeURIComponent(email)}`;
 
             await this.notificationsService.createForUser(user._id.toString(), {
@@ -345,9 +343,7 @@ export class AuthService {
         const hash = createHash('sha1')
             .update(user.email.toLowerCase())
             .digest('hex');
-        const appUrl =
-            this.configService.get<string>('MAIL_APP_URL') ??
-            'http://localhost:3000';
+        const appUrl = this.resolveMailAppUrl();
         const verifyUrl = `${appUrl.replace(/\/$/, '')}/verify-email/${user._id.toString()}/${hash}`;
 
         await this.notificationsService.createForUser(userId, {
@@ -403,6 +399,44 @@ export class AuthService {
 
     private hashToken(token: string): string {
         return createHash('sha256').update(token).digest('hex');
+    }
+
+    private resolveMailAppUrl(): string {
+        const configured =
+            this.configService.get<string>('MAIL_APP_URL') ??
+            this.configService.get<string>('NEXTAUTH_URL') ??
+            this.configService.get<string>('NEXT_PUBLIC_APP_URL') ??
+            this.configService.get<string>('APP_URL') ??
+            '';
+        const normalizedConfigured = configured.trim().replace(/\/$/, '');
+        const localPort =
+            this.configService.get<string>('WEB_PORT') ??
+            this.configService.get<string>('NEXT_WEB_PORT') ??
+            '';
+        const normalizedPort = localPort.trim();
+
+        if (normalizedConfigured) {
+            if (normalizedPort) {
+                try {
+                    const parsed = new URL(normalizedConfigured);
+                    if (
+                        parsed.hostname === 'localhost' ||
+                        parsed.hostname === '127.0.0.1'
+                    ) {
+                        return `http://localhost:${normalizedPort}`;
+                    }
+                } catch {
+                    return normalizedConfigured;
+                }
+            }
+            return normalizedConfigured;
+        }
+
+        if (normalizedPort) {
+            return `http://localhost:${normalizedPort}`;
+        }
+
+        return 'http://localhost';
     }
 
     private async ensureReferenceData(dto: RegisterMemberDto) {

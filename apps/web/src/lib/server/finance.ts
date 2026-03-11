@@ -70,6 +70,17 @@ type DuesBroadsheetFilters = {
   status?: DuesBroadsheetStatus;
 };
 
+function parseOptionalDateTimeInput(value: string | undefined, fieldName: string): Date | null {
+  if (!value || value.trim().length === 0) {
+    return null;
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new ApiError(400, `${fieldName} must be a valid date/time`, 'BadRequest');
+  }
+  return parsed;
+}
+
 function toSchemeDto(doc: DuesSchemeDoc): DuesSchemeDTO {
   return {
     id: doc._id.toString(),
@@ -1887,6 +1898,7 @@ export async function recordPayment(actorId: string, payload: {
   channel?: string;
   reference?: string;
   notes?: string;
+  paidAt?: string;
   scopeType?: ScopeType;
   scopeId?: string | null;
 }): Promise<PaymentDTO> {
@@ -1930,6 +1942,7 @@ export async function recordPayment(actorId: string, payload: {
 
   const invoiceCurrency = (invoice.currency ?? scheme.currency ?? 'NGN').toUpperCase();
   const requestedCurrency = payload.currency?.trim().toUpperCase();
+  const postedAt = parseOptionalDateTimeInput(payload.paidAt, 'paidAt');
   if (requestedCurrency && requestedCurrency !== invoiceCurrency) {
     throw new ApiError(400, 'currency must match invoice currency', 'BadRequest');
   }
@@ -1967,7 +1980,7 @@ export async function recordPayment(actorId: string, payload: {
     scopeId: scheme.scope_id ?? null,
     notes: payload.notes?.trim() || null,
     status: 'completed',
-    paidAt: new Date(),
+    paidAt: postedAt ?? new Date(),
     applications,
   });
   const appliedTotal = Number(

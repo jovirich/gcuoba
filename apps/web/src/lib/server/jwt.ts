@@ -12,6 +12,14 @@ export type AccessTokenPayload = {
   exp?: number;
 };
 
+export type ClassClaimTokenPayload = {
+  sub: string;
+  purpose: 'class_claim';
+  classYear: number;
+  iat?: number;
+  exp?: number;
+};
+
 function getJwtSecret() {
   const secret = process.env.JWT_SECRET;
   if (!secret) {
@@ -46,5 +54,35 @@ export function readBearerToken(request: Request): string {
     throw new ApiError(401, 'Authentication required', 'Unauthorized');
   }
   return header.slice('Bearer '.length).trim();
+}
+
+export function signClassClaimToken(userId: string, classYear: number): string {
+  return jwt.sign(
+    {
+      sub: userId,
+      purpose: 'class_claim',
+      classYear,
+    },
+    getJwtSecret(),
+    { expiresIn: '30m' },
+  );
+}
+
+export function verifyClassClaimToken(token: string, classYear: number): ClassClaimTokenPayload {
+  try {
+    const payload = jwt.verify(token, getJwtSecret()) as ClassClaimTokenPayload;
+    if (payload.purpose !== 'class_claim') {
+      throw new ApiError(401, 'Invalid claim token', 'Unauthorized');
+    }
+    if (payload.classYear !== classYear) {
+      throw new ApiError(401, 'Claim token does not match this class', 'Unauthorized');
+    }
+    return payload;
+  } catch (error) {
+    if (error instanceof ApiError) {
+      throw error;
+    }
+    throw new ApiError(401, 'Invalid or expired claim token', 'Unauthorized');
+  }
 }
 

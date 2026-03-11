@@ -1,5 +1,29 @@
 const DEFAULT_API_PREFIX = '/api';
-const DEFAULT_APP_URL = 'http://localhost:3000';
+
+function readLocalPort(): string | null {
+  const port = (process.env.PORT ?? process.env.WEB_PORT ?? '').trim();
+  if (!port) {
+    return null;
+  }
+  return /^\d+$/.test(port) ? port : null;
+}
+
+function defaultAppUrl() {
+  const localPort = readLocalPort();
+  if (localPort) {
+    return `http://localhost:${localPort}`;
+  }
+  return 'http://localhost';
+}
+
+function isLocalhostUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+  } catch {
+    return false;
+  }
+}
 
 type ApiRequestInit = RequestInit & { token?: string | null };
 
@@ -67,12 +91,22 @@ export function resolveAppBaseUrl() {
   if (typeof window === 'undefined') {
     const nextAuthUrl = process.env.NEXTAUTH_URL;
     if (nextAuthUrl) {
-      return normalizeBase(nextAuthUrl);
+      const normalized = normalizeBase(nextAuthUrl);
+      const localPort = readLocalPort();
+      if (localPort && isLocalhostUrl(normalized)) {
+        return `http://localhost:${localPort}`;
+      }
+      return normalized;
     }
 
     const publicAppUrl = process.env.NEXT_PUBLIC_APP_URL;
     if (publicAppUrl) {
-      return normalizeBase(publicAppUrl);
+      const normalized = normalizeBase(publicAppUrl);
+      const localPort = readLocalPort();
+      if (localPort && isLocalhostUrl(normalized)) {
+        return `http://localhost:${localPort}`;
+      }
+      return normalized;
     }
 
     const vercelUrl = process.env.VERCEL_URL;
@@ -83,7 +117,7 @@ export function resolveAppBaseUrl() {
       return normalizeBase(withProtocol);
     }
 
-    return DEFAULT_APP_URL;
+    return defaultAppUrl();
   }
   return '';
 }

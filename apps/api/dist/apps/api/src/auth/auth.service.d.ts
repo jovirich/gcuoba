@@ -65,6 +65,7 @@ export declare class AuthService {
     }>;
     private normalizeLegacyBcrypt;
     private hashToken;
+    private resolveMailAppUrl;
     private ensureReferenceData;
     private signToken;
     private resolveRegistrationReviewerIds;

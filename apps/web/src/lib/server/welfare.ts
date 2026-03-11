@@ -49,6 +49,17 @@ type ResolvedPayoutInput = {
   deductions: NormalizedPayoutDeduction[];
 };
 
+function parseOptionalDateTimeInput(value: string | undefined, fieldName: string): Date | null {
+  if (!value || value.trim().length === 0) {
+    return null;
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new ApiError(400, `${fieldName} must be a valid date/time`, 'BadRequest');
+  }
+  return parsed;
+}
+
 function toCategory(doc: {
   _id: Types.ObjectId;
   name: string;
@@ -908,6 +919,7 @@ export async function recordWelfareContribution(
     amount?: number;
     currency?: string;
     notes?: string;
+    paidAt?: string;
   },
 ): Promise<WelfareContributionDTO> {
   if (!Types.ObjectId.isValid(caseId)) {
@@ -930,6 +942,7 @@ export async function recordWelfareContribution(
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new ApiError(400, 'amount must be greater than 0', 'BadRequest');
   }
+  const paidAt = parseOptionalDateTimeInput(payload.paidAt, 'paidAt');
 
   const contribution = await WelfareContributionModel.create({
     caseId,
@@ -939,7 +952,7 @@ export async function recordWelfareContribution(
     amount,
     currency: payload.currency?.trim().toUpperCase() || welfareCase.currency || 'NGN',
     notes: payload.notes?.trim() || null,
-    paidAt: new Date(),
+    paidAt: paidAt ?? new Date(),
     status: 'pending',
     reviewedBy: null,
     reviewedAt: null,
@@ -973,6 +986,7 @@ export async function recordWelfarePayout(
     channel?: string;
     reference?: string;
     notes?: string;
+    disbursedAt?: string;
     retainerMode?: 'none' | 'percentage' | 'fixed';
     retainerPercentage?: number;
     retainerAmount?: number;
@@ -1006,6 +1020,7 @@ export async function recordWelfarePayout(
   if (!channel) {
     throw new ApiError(400, 'channel is required', 'BadRequest');
   }
+  const disbursedAt = parseOptionalDateTimeInput(payload.disbursedAt, 'disbursedAt');
 
   const payout = await WelfarePayoutModel.create({
     caseId,
@@ -1024,7 +1039,7 @@ export async function recordWelfarePayout(
       percentage: row.percentage ?? null,
       invoiceId: row.invoiceId && Types.ObjectId.isValid(row.invoiceId) ? new Types.ObjectId(row.invoiceId) : null,
     })),
-    disbursedAt: null,
+    disbursedAt,
     status: 'pending',
     reviewedBy: null,
     reviewedAt: null,

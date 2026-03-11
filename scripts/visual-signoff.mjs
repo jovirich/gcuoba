@@ -7,8 +7,8 @@ import mongoose from 'mongoose';
 import { chromium, devices } from 'playwright';
 
 let API_URL = 'http://localhost:4000';
-let WEB_URL = 'http://localhost:3000';
-const WEB_PORT = process.env.WEB_PORT ?? '3000';
+const WEB_PORT = (process.env.WEB_PORT ?? process.env.PORT ?? '').trim();
+let WEB_URL = (process.env.WEB_URL ?? '').trim() || (WEB_PORT ? `http://localhost:${WEB_PORT}` : 'http://localhost');
 const SCREEN_DIR = join(process.cwd(), 'artifacts', 'visual-signoff');
 
 const QA_USER = {
@@ -42,8 +42,16 @@ async function waitForHttp(url, timeoutMs = 120000) {
 }
 
 async function findLiveBaseUrl(kind) {
-  const ports = kind === 'api' ? [4000, 4001, 4100] : [3000];
+  const ports =
+    kind === 'api'
+      ? [4000, 4001, 4100]
+      : WEB_PORT && Number.isFinite(Number(WEB_PORT))
+        ? [Number(WEB_PORT)]
+        : [];
   const path = kind === 'api' ? '/health' : '/login';
+  if (ports.length === 0) {
+    return null;
+  }
   for (const port of ports) {
     const url = `http://localhost:${port}${path}`;
     try {
@@ -139,13 +147,18 @@ async function runVisualCapture() {
     console.log(`Using existing Web: ${WEB_URL}`);
   } else {
     console.log('Starting Web service...');
-    webProc = startService('npm', ['run', 'start', '--workspace', 'web'], {
-      PORT: WEB_PORT,
+    const webEnv = {
       NEXT_PUBLIC_API_BASE_URL: API_URL,
       NEXTAUTH_SECRET: 'visual-signoff-secret',
-      NEXTAUTH_URL: `http://localhost:${WEB_PORT}`,
+      NEXTAUTH_URL: process.env.NEXTAUTH_URL || WEB_URL,
+    };
+    if (WEB_PORT) {
+      webEnv.PORT = WEB_PORT;
+    }
+    webProc = startService('npm', ['run', 'start', '--workspace', 'web'], {
+      ...webEnv,
     });
-    WEB_URL = `http://localhost:${WEB_PORT}`;
+    WEB_URL = process.env.NEXTAUTH_URL || WEB_URL;
   }
 
   try {

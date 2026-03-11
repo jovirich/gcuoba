@@ -39,6 +39,38 @@ function normalizeLegacyBcrypt(hash: string): string {
   return hash;
 }
 
+function isLikelyEmail(value: string) {
+  return value.includes('@');
+}
+
+function phoneLookupCandidates(value: string) {
+  const trimmed = value.trim();
+  const digits = trimmed.replace(/\D/g, '');
+  const candidates = new Set<string>();
+  if (!digits) {
+    return [] as string[];
+  }
+
+  if (trimmed.startsWith('+')) {
+    candidates.add(`+${digits}`);
+  }
+  candidates.add(digits);
+
+  if (digits.length === 11 && digits.startsWith('0')) {
+    const local = digits.slice(1);
+    candidates.add(`+234${local}`);
+    candidates.add(`234${local}`);
+  }
+
+  if (digits.length === 13 && digits.startsWith('234')) {
+    const local = digits.slice(3);
+    candidates.add(`+${digits}`);
+    candidates.add(`0${local}`);
+  }
+
+  return Array.from(candidates);
+}
+
 async function ensureGlobalAdminForUser(userId: string) {
   let role = await RoleModel.findOne({ code: 'super_admin', scope: 'global' }).exec();
   if (!role) {
@@ -112,14 +144,35 @@ export const POST = (request: Request) =>
   withApiHandler(async () => {
     await connectMongo();
 
-    const payload = (await request.json()) as { email?: string; password?: string };
-    const email = payload.email?.trim().toLowerCase();
+    const payload = (await request.json()) as { identifier?: string; email?: string; password?: string };
+    const identifier = (payload.identifier ?? payload.email)?.trim();
     const password = payload.password;
-    if (!email || !password) {
-      throw new ApiError(400, 'Email and password are required', 'BadRequest');
+    if (!identifier || !password) {
+      throw new ApiError(400, 'Email or phone and password are required', 'BadRequest');
     }
 
-    const existing = await UserModel.findOne({ email }).exec();
+    const lookupValue = identifier.toLowerCase();
+    let existing = null as Awaited<ReturnType<typeof UserModel.findOne>>;
+    if (isLikelyEmail(lookupValue)) {
+      existing = await UserModel.findOne({ email: lookupValue }).exec();
+    } else {
+      const candidates = phoneLookupCandidates(identifier);
+      if (candidates.length === 0) {
+        throw new ApiError(401, 'Invalid credentials', 'Unauthorized');
+      }
+      const matches = await UserModel.find({ phone: { $in: candidates } })
+        .limit(2)
+        .exec();
+      if (matches.length > 1) {
+        throw new ApiError(
+          400,
+          'This phone number maps to multiple accounts. Please sign in with email.',
+          'BadRequest',
+        );
+      }
+      existing = matches[0] ?? null;
+    }
+
     if (!existing) {
       throw new ApiError(401, 'Invalid credentials', 'Unauthorized');
     }
@@ -130,7 +183,8 @@ export const POST = (request: Request) =>
       throw new ApiError(401, 'Invalid credentials', 'Unauthorized');
     }
 
-    if (forcedAdminEmails().has(email)) {
+    const normalizedEmail = existing.email.toLowerCase();
+    if (forcedAdminEmails().has(normalizedEmail)) {
       await ensureGlobalAdminForUser(existing._id.toString());
       await ensureExecutiveMemberFoundation(existing._id.toString());
       await assignAlumniNumberForUserIfClassed(existing._id.toString());

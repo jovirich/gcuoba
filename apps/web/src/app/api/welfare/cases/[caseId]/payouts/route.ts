@@ -16,6 +16,7 @@ type Body = {
   channel?: string;
   reference?: string;
   notes?: string;
+  disbursedAt?: string;
   retainerMode?: 'none' | 'percentage' | 'fixed';
   retainerPercentage?: number;
   retainerAmount?: number;

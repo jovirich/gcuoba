@@ -168,6 +168,12 @@ function lockScopeAccess(
   };
 }
 
+function nowLocalDateTimeValue() {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
 export function FinancePanel({
   summary,
   authToken,
@@ -187,6 +193,7 @@ export function FinancePanel({
     channel: 'manual',
     reference: '',
     notes: '',
+    paidAt: nowLocalDateTimeValue(),
   });
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
@@ -1211,11 +1218,19 @@ export function FinancePanel({
           channel: paymentState.channel || 'manual',
           reference: paymentState.reference || undefined,
           notes: paymentState.notes || undefined,
+          paidAt: paymentState.paidAt || undefined,
           invoiceApplications: [{ invoiceId: invoice.id, amount: amountNumber }],
         }),
         token: authToken,
       });
-      setPaymentState({ invoiceId: '', amount: '', channel: 'manual', reference: '', notes: '' });
+      setPaymentState({
+        invoiceId: '',
+        amount: '',
+        channel: 'manual',
+        reference: '',
+        notes: '',
+        paidAt: nowLocalDateTimeValue(),
+      });
       setStatus('Payment recorded successfully.');
       router.refresh();
     } catch (err) {
@@ -2677,7 +2692,7 @@ export function FinancePanel({
               </select>
             </label>
 
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-4 md:grid-cols-3">
               <label className="text-sm text-slate-600">
                 Amount
                 <input
@@ -2702,6 +2717,15 @@ export function FinancePanel({
                   <option value="pos">POS</option>
                   <option value="cash">Cash</option>
                 </select>
+              </label>
+              <label className="text-sm text-slate-600">
+                Posting date/time
+                <input
+                  type="datetime-local"
+                  className="field-input"
+                  value={paymentState.paidAt}
+                  onChange={(event) => setPaymentState((prev) => ({ ...prev, paidAt: event.target.value }))}
+                />
               </label>
             </div>
 

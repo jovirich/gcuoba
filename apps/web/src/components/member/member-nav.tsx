@@ -11,6 +11,7 @@ type MemberNavItem = {
 const memberNavItems: MemberNavItem[] = [
   { href: '/dashboard', label: 'Dashboard' },
   { href: '/profile', label: 'Profile' },
+  { href: '/members', label: 'Members' },
   { href: '/notifications', label: 'Notifications' },
   { href: '/documents', label: 'Documents' },
   { href: '/dues', label: 'Dues' },

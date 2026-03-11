@@ -35,6 +35,7 @@ type ContributionFormState = {
   contributorQuery: string;
   amount: string;
   notes: string;
+  paidAt: string;
 };
 
 type PayoutFormState = {
@@ -42,6 +43,7 @@ type PayoutFormState = {
   channel: string;
   reference: string;
   notes: string;
+  disbursedAt: string;
   retainerMode: 'none' | 'percentage' | 'fixed';
   retainerPercentage: string;
   retainerAmount: string;
@@ -69,6 +71,12 @@ type CreateCaseFormState = {
 type CaseStatus = 'open' | 'closed';
 type WelfareTab = 'create' | 'manage';
 
+function nowLocalDateTimeValue() {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
 export function WelfarePanel({
   cases,
   initialCase,
@@ -89,12 +97,14 @@ export function WelfarePanel({
     contributorQuery: '',
     amount: '',
     notes: '',
+    paidAt: nowLocalDateTimeValue(),
   });
   const [payoutForm, setPayoutForm] = useState<PayoutFormState>({
     amount: '',
     channel: 'transfer',
     reference: '',
     notes: '',
+    disbursedAt: nowLocalDateTimeValue(),
     retainerMode: 'none',
     retainerPercentage: '',
     retainerAmount: '',
@@ -474,10 +484,17 @@ export function WelfarePanel({
           contributorName: selectedContributor.name,
           amount: Number(contributionForm.amount),
           notes: contributionForm.notes || undefined,
+          paidAt: contributionForm.paidAt || undefined,
         }),
         token: authToken,
       });
-      setContributionForm({ contributorUserId: '', contributorQuery: '', amount: '', notes: '' });
+      setContributionForm({
+        contributorUserId: '',
+        contributorQuery: '',
+        amount: '',
+        notes: '',
+        paidAt: nowLocalDateTimeValue(),
+      });
       setSubmissionStatus('Contribution submitted for approval.');
       await refreshCase(selectedCaseId);
       await loadQueue();
@@ -572,6 +589,7 @@ export function WelfarePanel({
           channel: payoutForm.channel,
           reference: payoutForm.reference || undefined,
           notes: payoutForm.notes || undefined,
+          disbursedAt: payoutForm.disbursedAt || undefined,
           retainerMode: payoutForm.retainerMode,
           retainerPercentage:
             payoutForm.retainerMode === 'percentage' ? Number(payoutForm.retainerPercentage || 0) : undefined,
@@ -591,6 +609,7 @@ export function WelfarePanel({
         channel: 'transfer',
         reference: '',
         notes: '',
+        disbursedAt: nowLocalDateTimeValue(),
         retainerMode: 'none',
         retainerPercentage: '',
         retainerAmount: '',
@@ -1032,6 +1051,17 @@ export function WelfarePanel({
                       }
                     />
                   </label>
+                  <label className="text-xs text-slate-500">
+                    Posting date/time
+                    <input
+                      type="datetime-local"
+                      className="field-input"
+                      value={contributionForm.paidAt}
+                      onChange={(event) =>
+                        setContributionForm((prev) => ({ ...prev, paidAt: event.target.value }))
+                      }
+                    />
+                  </label>
                   <button
                     type="submit"
                     className="btn-primary"
@@ -1248,6 +1278,17 @@ export function WelfarePanel({
                       value={payoutForm.notes}
                       onChange={(event) =>
                         setPayoutForm((prev) => ({ ...prev, notes: event.target.value }))
+                      }
+                    />
+                  </label>
+                  <label className="text-xs text-slate-500">
+                    Posting date/time
+                    <input
+                      type="datetime-local"
+                      className="field-input"
+                      value={payoutForm.disbursedAt}
+                      onChange={(event) =>
+                        setPayoutForm((prev) => ({ ...prev, disbursedAt: event.target.value }))
                       }
                     />
                   </label>

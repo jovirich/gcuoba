@@ -16,6 +16,7 @@ import { hasGlobalAccess } from "@/lib/server/authorization";
 import { connectMongo } from "@/lib/server/mongo";
 import { RoleAssignmentsPanel } from "./role-assignments-panel";
 import { SetupPanel } from "./setup-panel";
+import { ClaimLinksPanel } from "./claim-links-panel";
 
 export default async function SetupPage() {
     const session = await getServerSession(authOptions);
@@ -33,6 +34,9 @@ export default async function SetupPage() {
     if (!globalAccess) {
         redirect("/admin");
     }
+
+    const defaultBaseUrl =
+        process.env.NEXT_PUBLIC_APP_URL ?? process.env.NEXTAUTH_URL ?? "";
 
     const [
         branches,
@@ -78,6 +82,10 @@ export default async function SetupPage() {
                 roleFeatures={roleFeatures}
                 featureModules={featureModules}
                 authToken={sessionUser.token}
+            />
+            <ClaimLinksPanel
+                classes={classes}
+                defaultBaseUrl={defaultBaseUrl}
             />
             <RoleAssignmentsPanel
                 assignments={assignments}

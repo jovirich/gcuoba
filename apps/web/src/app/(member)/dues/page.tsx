@@ -1,7 +1,7 @@
 import type { DuesBroadsheetDTO } from '@gcuoba/types';
 import { getServerSession } from 'next-auth';
 import { redirect } from 'next/navigation';
-import { DuesBroadsheetPanel } from '@/components/dues/dues-broadsheet-panel';
+import { MemberDuesTabsPanel } from '@/components/dues/member-dues-tabs-panel';
 import { fetchJson } from '@/lib/api';
 import { authOptions } from '@/lib/auth-options';
 
@@ -46,17 +46,15 @@ export default async function MemberDuesPage() {
     <main className="member-page p-4 md:p-6">
       <header className="member-page-header">
         <p className="member-page-kicker">Dues</p>
-        <h1 className="member-page-title">Class dues broadsheet</h1>
+        <h1 className="member-page-title">Dues workspace</h1>
         <p className="member-page-subtitle">
-          Review current-year dues, previous outstanding, and payment progress across your class.
+          Switch between your personal dues summary and your class dues broadsheet.
         </p>
       </header>
-      <DuesBroadsheetPanel
-        endpoint="/finance/dues/me"
+      <MemberDuesTabsPanel
+        userId={user.id}
         authToken={user.token}
-        initialData={initialData}
-        title="Class dues view"
-        subtitle="Search classmates and filter by dues position."
+        initialClassData={initialData}
       />
     </main>
   );

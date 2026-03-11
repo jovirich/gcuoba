@@ -6,7 +6,6 @@ import { buildAppUrl } from '@/lib/api';
 
 type ForgotPasswordResponse = {
   message: string;
-  resetUrl?: string;
 };
 
 export default function ForgotPasswordPage() {
@@ -50,14 +49,6 @@ export default function ForgotPasswordPage() {
         {result ? (
           <div className="space-y-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
             <p>{result.message}</p>
-            {result.resetUrl ? (
-              <p>
-                Dev reset link:{' '}
-                <a className="underline" href={result.resetUrl}>
-                  {result.resetUrl}
-                </a>
-              </p>
-            ) : null}
           </div>
         ) : null}
 

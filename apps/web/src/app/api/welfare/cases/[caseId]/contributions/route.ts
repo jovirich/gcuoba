@@ -17,6 +17,7 @@ type Body = {
   amount?: number;
   currency?: string;
   notes?: string;
+  paidAt?: string;
 };
 
 export const POST = (request: Request, context: Context) =>

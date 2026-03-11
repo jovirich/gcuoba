@@ -15,6 +15,7 @@ type RecordPaymentBody = {
   channel?: string;
   reference?: string;
   notes?: string;
+  paidAt?: string;
   scopeType?: 'global' | 'branch' | 'class';
   scopeId?: string | null;
 };

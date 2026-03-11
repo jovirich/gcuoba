@@ -128,6 +128,35 @@ function normalizeAppUrl(rawUrl: string | undefined): string | null {
   }
 }
 
+function resolveMailAppUrl(): string | null {
+  const configuredUrl =
+    normalizeAppUrl(process.env.MAIL_APP_URL) ??
+    normalizeAppUrl(process.env.NEXTAUTH_URL) ??
+    normalizeAppUrl(process.env.NEXT_PUBLIC_APP_URL);
+
+  const localPort = (process.env.PORT ?? process.env.WEB_PORT ?? '').trim();
+  if (localPort && configuredUrl) {
+    try {
+      const parsed = new URL(configuredUrl);
+      if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
+        return `http://localhost:${localPort}`;
+      }
+    } catch {
+      return configuredUrl;
+    }
+  }
+
+  if (configuredUrl) {
+    return configuredUrl;
+  }
+
+  if (localPort) {
+    return `http://localhost:${localPort}`;
+  }
+
+  return null;
+}
+
 function renderBodyAsHtml(body: string): string {
   const paragraphs = body
     .split(/\n{2,}/)
@@ -148,7 +177,7 @@ function renderBodyAsHtml(body: string): string {
 
 function renderHtmlTemplate(subject: string, body: string): string {
   const appName = process.env.MAIL_APP_NAME || 'GCUOBA Portal';
-  const appUrl = normalizeAppUrl(process.env.MAIL_APP_URL || process.env.NEXT_PUBLIC_APP_URL);
+  const appUrl = resolveMailAppUrl();
   const escapedAppName = escapeHtml(appName);
   const escapedSubject = escapeHtml(subject);
   const content = renderBodyAsHtml(body);
