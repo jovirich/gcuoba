@@ -100,11 +100,21 @@ function isPlaceholderEmail(email: string) {
   return email.toLowerCase().endsWith('@placeholder.gcuoba.local');
 }
 
-function isClaimableUser(user: { status?: 'pending' | 'active' | 'suspended'; claimStatus?: 'unclaimed' | 'claimed' }) {
+function normalizeSearchPhone(value: string) {
+  return value.replace(/\D/g, '');
+}
+
+function isClaimableUser(user: {
+  status?: 'pending' | 'active' | 'suspended';
+  claimStatus?: 'unclaimed' | 'claimed';
+}) {
   if (user.claimStatus === 'unclaimed') {
     return true;
   }
-  return user.status === 'pending' && user.claimStatus === undefined;
+  if (user.claimStatus === 'claimed') {
+    return false;
+  }
+  return user.status === 'pending';
 }
 
 async function resolveClassByYear(classYear: number) {
@@ -122,7 +132,11 @@ async function resolveClassByYear(classYear: number) {
   };
 }
 
-export async function listClassClaimMembers(classYear: number, query?: string): Promise<ClaimMember[]> {
+export async function listClassClaimMembers(
+  classYear: number,
+  query?: string,
+  searchBy: 'all' | 'name' | 'email' | 'phone' = 'all',
+): Promise<ClaimMember[]> {
   const classInfo = await resolveClassByYear(classYear);
   const memberships = await ClassMembershipModel.find({ classId: classInfo.classId })
     .select('userId')
@@ -149,23 +163,50 @@ export async function listClassClaimMembers(classYear: number, query?: string): 
     .exec();
 
   const normalizedQuery = query?.trim().toLowerCase() || '';
+  const normalizedPhoneQuery = normalizeSearchPhone(query?.trim() || '');
   const rows = users
     .filter((user) => isClaimableUser(user))
-    .map((user) => ({
-      userId: user._id.toString(),
-      name: user.name?.trim() || 'Unnamed member',
-      phone: user.phone?.trim() || null,
-      emailMasked: maskEmail(user.email),
-      emailIsPlaceholder: isPlaceholderEmail(user.email),
-    }))
+    .map((user) => {
+      const name = user.name?.trim() || 'Unnamed member';
+      const phone = user.phone?.trim() || null;
+      return {
+        userId: user._id.toString(),
+        name,
+        phone,
+        email: user.email.toLowerCase(),
+        normalizedPhone: phone ? normalizeSearchPhone(phone) : '',
+        emailMasked: maskEmail(user.email),
+        emailIsPlaceholder: isPlaceholderEmail(user.email),
+      };
+    })
     .filter((entry) => {
       if (!normalizedQuery) {
         return true;
       }
-      return entry.name.toLowerCase().includes(normalizedQuery);
+      if (searchBy === 'name') {
+        return entry.name.toLowerCase().includes(normalizedQuery);
+      }
+      if (searchBy === 'email') {
+        return entry.email.includes(normalizedQuery);
+      }
+      if (searchBy === 'phone') {
+        return normalizedPhoneQuery.length > 0 && entry.normalizedPhone.includes(normalizedPhoneQuery);
+      }
+      return (
+        entry.name.toLowerCase().includes(normalizedQuery) ||
+        entry.email.includes(normalizedQuery) ||
+        (normalizedPhoneQuery.length > 0 && entry.normalizedPhone.includes(normalizedPhoneQuery))
+      );
     })
     .sort((a, b) => a.name.localeCompare(b.name))
-    .slice(0, 100);
+    .slice(0, 100)
+    .map((entry) => ({
+      userId: entry.userId,
+      name: entry.name,
+      phone: entry.phone,
+      emailMasked: entry.emailMasked,
+      emailIsPlaceholder: entry.emailIsPlaceholder,
+    }));
 
   return rows;
 }
@@ -184,7 +225,7 @@ export async function verifyClassClaim(
     throw new ApiError(404, 'Member not found in this class claim list', 'NotFound');
   }
 
-  const user = await UserModel.findById(userId).select('name phone email passwordHash status claimStatus').exec();
+  const user = await UserModel.findById(userId).select('name phone email passwordHash status claimStatus claimedAt').exec();
   if (!user) {
     throw new ApiError(404, 'Member account not found', 'NotFound');
   }

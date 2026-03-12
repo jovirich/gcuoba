@@ -27,7 +27,7 @@ const UserSchema = new Schema(
     phone: { type: String, default: null },
     alumniNumber: { type: String, trim: true, unique: true, sparse: true },
     status: { type: String, enum: USER_STATUSES, default: 'pending' },
-    claimStatus: { type: String, enum: USER_CLAIM_STATUSES, default: 'claimed' },
+    claimStatus: { type: String, enum: USER_CLAIM_STATUSES },
     claimedAt: { type: Date, default: null },
   },
   { collection: 'users', timestamps: true },

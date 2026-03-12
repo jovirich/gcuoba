@@ -99,6 +99,7 @@ export function ClassClaimForm({ classYear }: Props) {
   const [options, setOptions] = useState<ClaimOptions | null>(null);
   const [members, setMembers] = useState<ClaimMember[]>([]);
   const [search, setSearch] = useState('');
+  const [searchBy, setSearchBy] = useState<'all' | 'name' | 'email' | 'phone'>('all');
   const [selectedUserId, setSelectedUserId] = useState<string>('');
   const [defaultPassword, setDefaultPassword] = useState('');
   const [claimToken, setClaimToken] = useState<string>('');
@@ -159,6 +160,7 @@ export function ClassClaimForm({ classYear }: Props) {
       const params = new URLSearchParams();
       if (query?.trim()) {
         params.set('query', query.trim());
+        params.set('searchBy', searchBy);
       }
       const queryString = params.toString();
       const data = await fetchAppJson<{ members: ClaimMember[] }>(
@@ -293,9 +295,19 @@ export function ClassClaimForm({ classYear }: Props) {
         {notice ? <p className="rounded-lg border border-lime-200 bg-lime-50 p-2 text-sm text-lime-700">{notice}</p> : null}
 
         <form onSubmit={handleSearch} className="flex flex-wrap gap-2">
+          <select
+            className="field-input"
+            value={searchBy}
+            onChange={(event) => setSearchBy(event.target.value as 'all' | 'name' | 'email' | 'phone')}
+          >
+            <option value="all">All fields</option>
+            <option value="name">Name</option>
+            <option value="email">Email</option>
+            <option value="phone">Phone</option>
+          </select>
           <input
             className="field-input max-w-md"
-            placeholder="Search member name"
+            placeholder="Search by selected field"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
@@ -561,4 +573,3 @@ export function ClassClaimForm({ classYear }: Props) {
     </div>
   );
 }
-

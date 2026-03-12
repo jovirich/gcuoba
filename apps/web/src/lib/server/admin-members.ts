@@ -2,6 +2,7 @@ import type {
   AdminMemberDTO,
   BranchMembershipDTO,
   ClassMembershipDTO,
+  PrivacyLevel,
   RoleAssignmentDTO,
   UserDTO,
 } from '@gcuoba/types';
@@ -19,9 +20,18 @@ import {
   BranchMembershipModel,
   ClassModel,
   ClassMembershipModel,
+  DocumentRecordModel,
+  DuesInvoiceModel,
+  EventParticipationModel,
+  NotificationModel,
+  PasswordResetTokenModel,
+  PaymentModel,
   ProfileModel,
   RoleAssignmentModel,
   UserModel,
+  WelfareCaseModel,
+  WelfareContributionModel,
+  WelfarePayoutModel,
 } from './models';
 import type { AccessTokenPayload } from './jwt';
 import { assignAlumniNumberForClassMembership, assignAlumniNumberForUserIfClassed } from './alumni-number';
@@ -34,6 +44,7 @@ export type AdminMemberAccessScope =
   | { kind: 'managed'; branchIds: string[]; classIds: string[] };
 
 type ScopeType = 'global' | 'branch' | 'class';
+type ClaimStatus = 'unclaimed' | 'claimed';
 
 const DEFAULT_MEMBER_MODULE_EXCLUDED_EMAILS = [
   'visual.qa@gcuoba.local',
@@ -58,6 +69,54 @@ function isExcludedFromMemberModule(email?: string | null) {
     return false;
   }
   return memberModuleExcludedEmails().has(email.trim().toLowerCase());
+}
+
+const TITLE_ALLOWLIST = new Set(['mr', 'mrs', 'ms', 'dr', 'prof', 'chief']);
+
+function normalizeRequiredString(value: unknown, fieldName: string) {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  if (!normalized) {
+    throw new ApiError(400, `${fieldName} is required`, 'BadRequest');
+  }
+  return normalized;
+}
+
+function normalizeOptionalString(value: unknown) {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  return normalized || null;
+}
+
+function normalizeOptionalNumber(value: unknown, fieldName: string, min: number, max: number) {
+  if (value === null || value === undefined || `${value}`.trim().length === 0) {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    throw new ApiError(400, `${fieldName} must be between ${min} and ${max}`, 'BadRequest');
+  }
+  return parsed;
+}
+
+function normalizeClaimStatus(value: unknown): ClaimStatus | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const normalized = `${value}`.trim().toLowerCase();
+  if (normalized === 'unclaimed' || normalized === 'claimed') {
+    return normalized;
+  }
+  throw new ApiError(400, 'claimStatus must be claimed or unclaimed', 'BadRequest');
+}
+
+function normalizePrivacyLevel(value: unknown): PrivacyLevel | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const normalized = `${value}`.trim();
+  if (normalized === 'public' || normalized === 'public_to_members' || normalized === 'private') {
+    return normalized;
+  }
+  throw new ApiError(400, 'privacyLevel is invalid', 'BadRequest');
 }
 
 function activeAssignmentFilter() {
@@ -390,6 +449,191 @@ export async function findAdminMember(
   }
 
   return applyScopeToMemberPayload(payload, scope);
+}
+
+type AdminMemberProfileUpdateInput = {
+  title?: string | null;
+  firstName?: string;
+  middleName?: string | null;
+  lastName?: string;
+  email?: string;
+  phone?: string | null;
+  claimStatus?: ClaimStatus | null;
+  dobDay?: number | string | null;
+  dobMonth?: number | string | null;
+  dobYear?: number | string | null;
+  sex?: string | null;
+  stateOfOrigin?: string | null;
+  lgaOfOrigin?: string | null;
+  occupation?: string | null;
+  houseId?: string | null;
+  privacyLevel?: PrivacyLevel | null;
+};
+
+export async function updateAdminMemberProfile(
+  userId: string,
+  scope: AdminMemberAccessScope,
+  input: AdminMemberProfileUpdateInput,
+  options?: { excludeSystemAccounts?: boolean },
+): Promise<AdminMemberDTO> {
+  await ensureMemberInScope(userId, scope);
+
+  const [user, existingProfile] = await Promise.all([
+    UserModel.findById(userId).exec(),
+    ProfileModel.findOne({ userId }).exec(),
+  ]);
+  if (!user) {
+    throw new ApiError(404, 'User not found', 'NotFound');
+  }
+  if (options?.excludeSystemAccounts && isExcludedFromMemberModule(user.email)) {
+    throw new ApiError(404, 'User not found', 'NotFound');
+  }
+
+  const firstName = normalizeRequiredString(input.firstName, 'firstName');
+  const lastName = normalizeRequiredString(input.lastName, 'lastName');
+  const middleName = normalizeOptionalString(input.middleName);
+  const titleRaw = normalizeOptionalString(input.title)?.toLowerCase() ?? null;
+  if (titleRaw && !TITLE_ALLOWLIST.has(titleRaw)) {
+    throw new ApiError(400, 'title is invalid', 'BadRequest');
+  }
+
+  const email = normalizeRequiredString(input.email, 'email').toLowerCase();
+  if (!email.includes('@')) {
+    throw new ApiError(400, 'email is invalid', 'BadRequest');
+  }
+  const phone = normalizeOptionalString(input.phone);
+
+  const [emailConflict, phoneConflict] = await Promise.all([
+    UserModel.findOne({ email, _id: { $ne: userId } }).select('_id').lean<{ _id: unknown }>().exec(),
+    phone
+      ? UserModel.findOne({ phone, _id: { $ne: userId } }).select('_id').lean<{ _id: unknown }>().exec()
+      : Promise.resolve(null),
+  ]);
+  if (emailConflict) {
+    throw new ApiError(400, 'This email is already in use by another member.', 'BadRequest');
+  }
+  if (phoneConflict) {
+    throw new ApiError(400, 'This phone number is already in use by another member.', 'BadRequest');
+  }
+
+  const claimStatus = normalizeClaimStatus(input.claimStatus);
+  if (input.claimStatus === null) {
+    user.claimStatus = undefined;
+    user.claimedAt = null;
+  } else if (claimStatus) {
+    user.claimStatus = claimStatus;
+    user.claimedAt = claimStatus === 'claimed' ? user.claimedAt ?? new Date() : null;
+  }
+
+  user.name = [firstName, middleName, lastName].filter(Boolean).join(' ').trim();
+  user.email = email;
+  user.phone = phone;
+  await user.save();
+
+  const dobDay = normalizeOptionalNumber(input.dobDay, 'dobDay', 1, 31);
+  const dobMonth = normalizeOptionalNumber(input.dobMonth, 'dobMonth', 1, 12);
+  const dobYear = normalizeOptionalNumber(input.dobYear, 'dobYear', 1900, 2100);
+  const privacyLevel = normalizePrivacyLevel(input.privacyLevel) ?? existingProfile?.privacyLevel ?? 'public_to_members';
+
+  await ProfileModel.findOneAndUpdate(
+    { userId },
+    {
+      userId,
+      title: titleRaw,
+      firstName,
+      middleName,
+      lastName,
+      dobDay,
+      dobMonth,
+      dobYear,
+      sex: normalizeOptionalString(input.sex),
+      stateOfOrigin: normalizeOptionalString(input.stateOfOrigin),
+      lgaOfOrigin: normalizeOptionalString(input.lgaOfOrigin),
+      occupation: normalizeOptionalString(input.occupation),
+      houseId: normalizeOptionalString(input.houseId),
+      privacyLevel,
+    },
+    { new: true, upsert: true, setDefaultsOnInsert: true },
+  ).exec();
+
+  return findAdminMember(userId, scope, options);
+}
+
+type DeleteAdminMemberResult = {
+  success: true;
+  userId: string;
+};
+
+export async function deleteAdminMember(
+  userId: string,
+  scope: AdminMemberAccessScope,
+  options?: { excludeSystemAccounts?: boolean },
+): Promise<DeleteAdminMemberResult> {
+  await ensureMemberInScope(userId, scope);
+
+  const user = await UserModel.findById(userId).select('email claimStatus').exec();
+  if (!user) {
+    throw new ApiError(404, 'User not found', 'NotFound');
+  }
+  if (options?.excludeSystemAccounts && isExcludedFromMemberModule(user.email)) {
+    throw new ApiError(404, 'User not found', 'NotFound');
+  }
+  if (user.claimStatus !== 'unclaimed') {
+    throw new ApiError(
+      400,
+      'Only imported members that are still unclaimed can be deleted.',
+      'BadRequest',
+    );
+  }
+
+  const [
+    hasDuesInvoices,
+    hasPayments,
+    hasWelfareContributions,
+    hasWelfarePayouts,
+    hasWelfareCases,
+    hasEventParticipations,
+    hasDocuments,
+  ] = await Promise.all([
+    DuesInvoiceModel.exists({ userId }),
+    PaymentModel.exists({ payerUserId: userId }),
+    WelfareContributionModel.exists({ userId }),
+    WelfarePayoutModel.exists({ beneficiaryUserId: userId }),
+    WelfareCaseModel.exists({ beneficiaryUserId: userId }),
+    EventParticipationModel.exists({ userId }),
+    DocumentRecordModel.exists({ ownerUserId: userId }),
+  ]);
+
+  if (
+    hasDuesInvoices ||
+    hasPayments ||
+    hasWelfareContributions ||
+    hasWelfarePayouts ||
+    hasWelfareCases ||
+    hasEventParticipations ||
+    hasDocuments
+  ) {
+    throw new ApiError(
+      400,
+      'This unclaimed member has financial or activity records and cannot be deleted.',
+      'BadRequest',
+    );
+  }
+
+  const email = user.email?.toLowerCase() ?? null;
+  await Promise.all([
+    ProfileModel.deleteOne({ userId }).exec(),
+    ClassMembershipModel.deleteOne({ userId }).exec(),
+    BranchMembershipModel.deleteMany({ userId }).exec(),
+    RoleAssignmentModel.deleteMany({ userId }).exec(),
+    NotificationModel.deleteMany({ userId }).exec(),
+    EventParticipationModel.deleteMany({ userId }).exec(),
+    DocumentRecordModel.deleteMany({ ownerUserId: userId }).exec(),
+    email ? PasswordResetTokenModel.deleteMany({ email }).exec() : Promise.resolve(),
+  ]);
+
+  await UserModel.deleteOne({ _id: userId }).exec();
+  return { success: true, userId };
 }
 
 export async function updateAdminMemberStatus(

@@ -3,8 +3,7 @@ import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth-options";
 import { fetchJson, isApiErrorStatus } from "@/lib/api";
-import { BulkMemberImportPanel } from "./bulk-member-import-panel";
-import { MemberManagementPanel } from "./member-management-panel";
+import { MembersWorkspacePanel } from "./members-workspace-panel";
 
 type ScopeType = "global" | "branch" | "class";
 
@@ -60,14 +59,7 @@ export default async function MembersManagementPage({
                     centralized console.
                 </p>
             </header>
-            <BulkMemberImportPanel
-                authToken={user.token}
-                classes={classes}
-                branches={branches}
-                activeScopeType={scopeType}
-                activeScopeId={scopeId ?? null}
-            />
-            <MemberManagementPanel
+            <MembersWorkspacePanel
                 members={members}
                 branches={branches}
                 classes={classes}

@@ -67,6 +67,7 @@ export function MemberManagementPanel({
     const [error, setError] = useState<string | null>(null);
     const [statusLoading, setStatusLoading] = useState(false);
     const [classLoading, setClassLoading] = useState(false);
+    const [deleteLoading, setDeleteLoading] = useState(false);
     const [assignLoading, setAssignLoading] = useState(false);
     const [removeRoleId, setRemoveRoleId] = useState<string | null>(null);
     const [branchLoading, setBranchLoading] = useState(false);
@@ -77,6 +78,26 @@ export function MemberManagementPanel({
     const [classChoice, setClassChoice] = useState(classes[0]?.id ?? "");
     const [branchChoice, setBranchChoice] = useState(branches[0]?.id ?? "");
     const [branchNote, setBranchNote] = useState("");
+    const [profileEditLoading, setProfileEditLoading] = useState(false);
+    const [profileEditMode, setProfileEditMode] = useState(false);
+    const [profileEditForm, setProfileEditForm] = useState({
+        title: "mr",
+        firstName: "",
+        middleName: "",
+        lastName: "",
+        email: "",
+        phone: "",
+        claimStatus: "" as "" | "claimed" | "unclaimed",
+        dobDay: "",
+        dobMonth: "",
+        dobYear: "",
+        sex: "",
+        stateOfOrigin: "",
+        lgaOfOrigin: "",
+        occupation: "",
+        houseId: "",
+        privacyLevel: "public_to_members" as "public" | "public_to_members" | "private",
+    });
     const isScopeLocked = Boolean(activeScopeType && activeScopeType !== "global");
     const effectiveScopeType: ScopeType = isScopeLocked && activeScopeType ? activeScopeType : scope;
     const effectiveScopeTarget =
@@ -90,8 +111,8 @@ export function MemberManagementPanel({
     const classMap = useMemo(() => new Map(classes.map((classSet) => [classSet.id, classSet.label])), [classes]);
     const houseMap = useMemo(() => new Map(houses.map((house) => [house.id, house.name])), [houses]);
     const roleNameMap = useMemo(() => new Map(roles.map((role) => [role.code, role.name])), [roles]);
-    const resolveClaimStatus = useCallback((member: AdminMemberDTO) => {
-        return member.user.claimStatus === "unclaimed" ? "unclaimed" : "claimed";
+    const resolveClaimStatus = useCallback((member: AdminMemberDTO): "claimed" | "unclaimed" | null => {
+        return normalizeClaimStatus(member.user.claimStatus);
     }, []);
     const resolveBranchLabel = useCallback((branchId?: string | null) => {
         if (!branchId) {
@@ -284,6 +305,34 @@ export function MemberManagementPanel({
             setRoleCode("");
         }
     }, [availableRoles, roleCode]);
+
+    useEffect(() => {
+        if (!selectedMember) {
+            return;
+        }
+        setProfileEditMode(false);
+        setProfileEditForm({
+            title: selectedMember.profile?.title ?? "mr",
+            firstName: selectedMember.profile?.firstName ?? selectedMember.user.name.split(" ")[0] ?? "",
+            middleName: selectedMember.profile?.middleName ?? "",
+            lastName:
+                selectedMember.profile?.lastName ??
+                selectedMember.user.name.split(" ").slice(-1).join(" ") ??
+                "",
+            email: selectedMember.user.email ?? "",
+            phone: selectedMember.user.phone ?? "",
+            claimStatus: normalizeClaimStatus(selectedMember.user.claimStatus) ?? "",
+            dobDay: selectedMember.profile?.dobDay ? String(selectedMember.profile.dobDay) : "",
+            dobMonth: selectedMember.profile?.dobMonth ? String(selectedMember.profile.dobMonth) : "",
+            dobYear: selectedMember.profile?.dobYear ? String(selectedMember.profile.dobYear) : "",
+            sex: selectedMember.profile?.sex ?? "",
+            stateOfOrigin: selectedMember.profile?.stateOfOrigin ?? "",
+            lgaOfOrigin: selectedMember.profile?.lgaOfOrigin ?? "",
+            occupation: selectedMember.profile?.occupation ?? "",
+            houseId: selectedMember.profile?.houseId ?? "",
+            privacyLevel: selectedMember.profile?.privacyLevel ?? "public_to_members",
+        });
+    }, [selectedMember]);
 
     const updateMember = (userId: string, updater: (member: AdminMemberDTO) => AdminMemberDTO) => {
         setMembers((prev) => prev.map((member) => (member.user.id === userId ? updater(member) : member)));
@@ -505,6 +554,103 @@ export function MemberManagementPanel({
         }
     };
 
+    const handleProfileEditSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        if (!selectedMember) {
+            return;
+        }
+        const proceed = window.confirm(`Save profile changes for ${selectedMember.user.name}?`);
+        if (!proceed) {
+            return;
+        }
+        try {
+            setProfileEditLoading(true);
+            setMessage(null);
+            setError(null);
+            const updated = await fetchJson<AdminMemberDTO>(
+                buildScopedAdminMembersPath(
+                    `/admin/members/${selectedMember.user.id}`,
+                    activeScopeType,
+                    activeScopeId ?? undefined,
+                ),
+                {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        title: profileEditForm.title,
+                        firstName: profileEditForm.firstName,
+                        middleName: profileEditForm.middleName || null,
+                        lastName: profileEditForm.lastName,
+                        email: profileEditForm.email,
+                        phone: profileEditForm.phone || null,
+                        claimStatus: profileEditForm.claimStatus || null,
+                        dobDay: profileEditForm.dobDay || null,
+                        dobMonth: profileEditForm.dobMonth || null,
+                        dobYear: profileEditForm.dobYear || null,
+                        sex: profileEditForm.sex || null,
+                        stateOfOrigin: profileEditForm.stateOfOrigin || null,
+                        lgaOfOrigin: profileEditForm.lgaOfOrigin || null,
+                        occupation: profileEditForm.occupation || null,
+                        houseId: profileEditForm.houseId || null,
+                        privacyLevel: profileEditForm.privacyLevel,
+                    }),
+                    token: authToken,
+                },
+            );
+            updateMember(selectedMember.user.id, () => updated);
+            setMessage("Member profile updated.");
+            setProfileEditMode(false);
+        } catch (err) {
+            setError(extractError(err));
+        } finally {
+            setProfileEditLoading(false);
+        }
+    };
+
+    const handleDeleteImportedMember = async () => {
+        if (!selectedMember) {
+            return;
+        }
+        if (resolveClaimStatus(selectedMember) !== "unclaimed") {
+            setError("Only imported members that are still unclaimed can be deleted.");
+            return;
+        }
+        const proceed = window.confirm(
+            `Delete ${selectedMember.user.name}? This action cannot be undone.`,
+        );
+        if (!proceed) {
+            return;
+        }
+        try {
+            setDeleteLoading(true);
+            setMessage(null);
+            setError(null);
+            const result = await fetchJson<{ success: true; userId: string }>(
+                buildScopedAdminMembersPath(
+                    `/admin/members/${selectedMember.user.id}`,
+                    activeScopeType,
+                    activeScopeId ?? undefined,
+                ),
+                {
+                    method: "DELETE",
+                    token: authToken,
+                },
+            );
+            setMembers((prev) => {
+                const next = prev.filter((entry) => entry.user.id !== result.userId);
+                setSelectedMemberId((current) =>
+                    current === result.userId ? (next[0]?.user.id ?? "") : current,
+                );
+                return next;
+            });
+            setMessage("Imported unclaimed member deleted.");
+        } catch (err) {
+            setError(extractError(err));
+        } finally {
+            setDeleteLoading(false);
+        }
+    };
+
     const handleAssignRole = async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         if (!selectedMember || !roleCode) {
@@ -616,11 +762,13 @@ export function MemberManagementPanel({
                                     <span className={`btn-pill ${statusPills[member.user.status]} border-transparent`}>
                                         {capitalize(member.user.status)}
                                     </span>
-                                    <span
-                                        className={`btn-pill ${claimStatusPills[resolveClaimStatus(member)]} border-transparent`}
-                                    >
-                                        {capitalize(resolveClaimStatus(member))}
-                                    </span>
+                                    {resolveClaimStatus(member) && (
+                                        <span
+                                            className={`btn-pill ${claimStatusPills[resolveClaimStatus(member)!]} border-transparent`}
+                                        >
+                                            {capitalize(resolveClaimStatus(member)!)}
+                                        </span>
+                                    )}
                                 </div>
                             </div>
                             <p className="text-xs text-slate-500">
@@ -660,11 +808,13 @@ export function MemberManagementPanel({
                             <span className={`btn-pill ${statusPills[selectedMember.user.status]} border-transparent`}>
                                 Status: {capitalize(selectedMember.user.status)}
                             </span>
-                            <span
-                                className={`btn-pill ${claimStatusPills[resolveClaimStatus(selectedMember)]} border-transparent`}
-                            >
-                                Claim: {capitalize(resolveClaimStatus(selectedMember))}
-                            </span>
+                            {resolveClaimStatus(selectedMember) && (
+                                <span
+                                    className={`btn-pill ${claimStatusPills[resolveClaimStatus(selectedMember)!]} border-transparent`}
+                                >
+                                    Claim: {capitalize(resolveClaimStatus(selectedMember)!)}
+                                </span>
+                            )}
                         </div>
                     </div>
                     <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -708,44 +858,292 @@ export function MemberManagementPanel({
                 </div>
 
                 {tab === "profile" && (
-                    <div className="surface-card p-4">
-                        <p className="text-sm text-slate-600">Full member profile</p>
-                        <div className="mt-3 grid gap-3 text-sm text-slate-700 md:grid-cols-2">
-                            <div className="rounded-2xl border border-slate-100 p-3">
-                                <p><span className="font-semibold">Name:</span> {selectedMember.user.name}</p>
-                                <p><span className="font-semibold">Email:</span> {selectedMember.user.email}</p>
-                                <p><span className="font-semibold">Phone:</span> {selectedMember.user.phone ?? "N/A"}</p>
-                                <p><span className="font-semibold">Status:</span> {capitalize(selectedMember.user.status)}</p>
-                                <p>
-                                    <span className="font-semibold">Claim status:</span>{" "}
-                                    {capitalize(resolveClaimStatus(selectedMember))}
-                                </p>
+                    <div className="space-y-3">
+                        <div className="surface-card p-4">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                                <p className="text-sm text-slate-700">Member profile</p>
+                                {profileEditMode ? (
+                                    <button
+                                        type="button"
+                                        className="btn-pill border-slate-200 text-slate-700"
+                                        onClick={() => setProfileEditMode(false)}
+                                        disabled={profileEditLoading}
+                                    >
+                                        Cancel edit
+                                    </button>
+                                ) : (
+                                    <button
+                                        type="button"
+                                        className="btn-primary"
+                                        onClick={() => setProfileEditMode(true)}
+                                    >
+                                        Edit profile
+                                    </button>
+                                )}
                             </div>
-                            <div className="rounded-2xl border border-slate-100 p-3">
-                                <p><span className="font-semibold">Title:</span> {selectedMember.profile?.title ?? "N/A"}</p>
-                                <p><span className="font-semibold">First name:</span> {selectedMember.profile?.firstName ?? "N/A"}</p>
-                                <p><span className="font-semibold">Middle name:</span> {selectedMember.profile?.middleName ?? "N/A"}</p>
-                                <p><span className="font-semibold">Last name:</span> {selectedMember.profile?.lastName ?? "N/A"}</p>
-                                <p><span className="font-semibold">Privacy:</span> {selectedMember.profile?.privacyLevel ?? "N/A"}</p>
-                            </div>
-                            <div className="rounded-2xl border border-slate-100 p-3">
-                                <p><span className="font-semibold">Date of birth:</span> {formatDob(selectedMember.profile)}</p>
-                                <p><span className="font-semibold">Sex:</span> {selectedMember.profile?.sex ?? "N/A"}</p>
-                                <p><span className="font-semibold">Occupation:</span> {selectedMember.profile?.occupation ?? "N/A"}</p>
-                                <p>
-                                    <span className="font-semibold">House:</span>{" "}
-                                    {selectedMember.profile?.houseId
-                                        ? resolveHouseLabel(selectedMember.profile.houseId)
-                                        : "N/A"}
-                                </p>
-                            </div>
-                            <div className="rounded-2xl border border-slate-100 p-3">
-                                <p><span className="font-semibold">State of origin:</span> {selectedMember.profile?.stateOfOrigin ?? "N/A"}</p>
-                                <p><span className="font-semibold">LGA of origin:</span> {selectedMember.profile?.lgaOfOrigin ?? "N/A"}</p>
-                                <p><span className="font-semibold">Residence:</span> {formatResidence(selectedMember.profile)}</p>
+                            <div className="mt-3 grid gap-3 text-sm text-slate-700 md:grid-cols-2">
+                                <div className="rounded-2xl border border-slate-100 p-3">
+                                    <p><span className="font-semibold">Name:</span> {selectedMember.user.name}</p>
+                                    <p><span className="font-semibold">Email:</span> {selectedMember.user.email}</p>
+                                    <p><span className="font-semibold">Phone:</span> {selectedMember.user.phone ?? "N/A"}</p>
+                                    {resolveClaimStatus(selectedMember) && (
+                                        <p><span className="font-semibold">Claim status:</span> {capitalize(resolveClaimStatus(selectedMember)!)}</p>
+                                    )}
+                                </div>
+                                <div className="rounded-2xl border border-slate-100 p-3">
+                                    <p><span className="font-semibold">Class:</span> {selectedMember.classMembership?.classId ? resolveClassLabel(selectedMember.classMembership.classId) : "Unassigned"}</p>
+                                    <p><span className="font-semibold">House:</span> {selectedMember.profile?.houseId ? resolveHouseLabel(selectedMember.profile.houseId) : "N/A"}</p>
+                                    <p><span className="font-semibold">Occupation:</span> {selectedMember.profile?.occupation ?? "N/A"}</p>
+                                    <p><span className="font-semibold">Privacy:</span> {selectedMember.profile?.privacyLevel ?? "N/A"}</p>
+                                </div>
                             </div>
                         </div>
-                        <div className="mt-4 rounded-2xl border border-slate-100 p-3">
+                        {profileEditMode && (
+                        <form className="surface-card p-4" onSubmit={handleProfileEditSubmit}>
+                            <p className="text-sm text-slate-700">Edit member profile</p>
+                            <div className="mt-3 grid gap-3 text-sm md:grid-cols-3">
+                                <label className="text-slate-600">
+                                    Title
+                                    <select
+                                        className="field-input"
+                                        value={profileEditForm.title}
+                                        onChange={(event) =>
+                                            setProfileEditForm((prev) => ({ ...prev, title: event.target.value }))
+                                        }
+                                        disabled={profileEditLoading}
+                                    >
+                                        <option value="mr">Mr</option>
+                                        <option value="mrs">Mrs</option>
+                                        <option value="ms">Ms</option>
+                                        <option value="dr">Dr</option>
+                                        <option value="prof">Prof</option>
+                                        <option value="chief">Chief</option>
+                                    </select>
+                                </label>
+                                <label className="text-slate-600">
+                                    First name
+                                    <input
+                                        className="field-input"
+                                        value={profileEditForm.firstName}
+                                        onChange={(event) =>
+                                            setProfileEditForm((prev) => ({ ...prev, firstName: event.target.value }))
+                                        }
+                                        disabled={profileEditLoading}
+                                    />
+                                </label>
+                                <label className="text-slate-600">
+                                    Middle name
+                                    <input
+                                        className="field-input"
+                                        value={profileEditForm.middleName}
+                                        onChange={(event) =>
+                                            setProfileEditForm((prev) => ({ ...prev, middleName: event.target.value }))
+                                        }
+                                        disabled={profileEditLoading}
+                                    />
+                                </label>
+                                <label className="text-slate-600 md:col-span-2">
+                                    Last name
+                                    <input
+                                        className="field-input"
+                                        value={profileEditForm.lastName}
+                                        onChange={(event) =>
+                                            setProfileEditForm((prev) => ({ ...prev, lastName: event.target.value }))
+                                        }
+                                        disabled={profileEditLoading}
+                                    />
+                                </label>
+                                <label className="text-slate-600">
+                                    Claim status
+                                    <select
+                                        className="field-input"
+                                        value={profileEditForm.claimStatus}
+                                        onChange={(event) =>
+                                            setProfileEditForm((prev) => ({
+                                                ...prev,
+                                                claimStatus: event.target.value as "claimed" | "unclaimed",
+                                            }))
+                                        }
+                                        disabled={profileEditLoading}
+                                    >
+                                        <option value="">Not applicable</option>
+                                        <option value="claimed">Claimed</option>
+                                        <option value="unclaimed">Unclaimed</option>
+                                    </select>
+                                </label>
+                                <label className="text-slate-600 md:col-span-2">
+                                    Email
+                                    <input
+                                        className="field-input"
+                                        value={profileEditForm.email}
+                                        onChange={(event) =>
+                                            setProfileEditForm((prev) => ({ ...prev, email: event.target.value }))
+                                        }
+                                        disabled={profileEditLoading}
+                                    />
+                                </label>
+                                <label className="text-slate-600">
+                                    Phone
+                                    <input
+                                        className="field-input"
+                                        value={profileEditForm.phone}
+                                        onChange={(event) =>
+                                            setProfileEditForm((prev) => ({ ...prev, phone: event.target.value }))
+                                        }
+                                        disabled={profileEditLoading}
+                                    />
+                                </label>
+                                <label className="text-slate-600">
+                                    Class
+                                    <input
+                                        className="field-input"
+                                        value={
+                                            selectedMember.classMembership?.classId
+                                                ? resolveClassLabel(selectedMember.classMembership.classId)
+                                                : "Unassigned"
+                                        }
+                                        disabled
+                                    />
+                                </label>
+                                <label className="text-slate-600">
+                                    House
+                                    <select
+                                        className="field-input"
+                                        value={profileEditForm.houseId}
+                                        onChange={(event) =>
+                                            setProfileEditForm((prev) => ({ ...prev, houseId: event.target.value }))
+                                        }
+                                        disabled={profileEditLoading}
+                                    >
+                                        <option value="">No house</option>
+                                        {houses.map((house) => (
+                                            <option key={house.id} value={house.id}>
+                                                {house.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+                                <label className="text-slate-600">
+                                    Privacy
+                                    <select
+                                        className="field-input"
+                                        value={profileEditForm.privacyLevel}
+                                        onChange={(event) =>
+                                            setProfileEditForm((prev) => ({
+                                                ...prev,
+                                                privacyLevel: event.target.value as
+                                                    | "public"
+                                                    | "public_to_members"
+                                                    | "private",
+                                            }))
+                                        }
+                                        disabled={profileEditLoading}
+                                    >
+                                        <option value="public">Public</option>
+                                        <option value="public_to_members">Visible to members</option>
+                                        <option value="private">Private</option>
+                                    </select>
+                                </label>
+                                <label className="text-slate-600">
+                                    DOB day
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        max={31}
+                                        className="field-input"
+                                        value={profileEditForm.dobDay}
+                                        onChange={(event) =>
+                                            setProfileEditForm((prev) => ({ ...prev, dobDay: event.target.value }))
+                                        }
+                                        disabled={profileEditLoading}
+                                    />
+                                </label>
+                                <label className="text-slate-600">
+                                    DOB month
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        max={12}
+                                        className="field-input"
+                                        value={profileEditForm.dobMonth}
+                                        onChange={(event) =>
+                                            setProfileEditForm((prev) => ({ ...prev, dobMonth: event.target.value }))
+                                        }
+                                        disabled={profileEditLoading}
+                                    />
+                                </label>
+                                <label className="text-slate-600">
+                                    DOB year
+                                    <input
+                                        type="number"
+                                        min={1900}
+                                        max={2100}
+                                        className="field-input"
+                                        value={profileEditForm.dobYear}
+                                        onChange={(event) =>
+                                            setProfileEditForm((prev) => ({ ...prev, dobYear: event.target.value }))
+                                        }
+                                        disabled={profileEditLoading}
+                                    />
+                                </label>
+                                <label className="text-slate-600">
+                                    Sex
+                                    <input
+                                        className="field-input"
+                                        value={profileEditForm.sex}
+                                        onChange={(event) =>
+                                            setProfileEditForm((prev) => ({ ...prev, sex: event.target.value }))
+                                        }
+                                        disabled={profileEditLoading}
+                                    />
+                                </label>
+                                <label className="text-slate-600">
+                                    Occupation
+                                    <input
+                                        className="field-input"
+                                        value={profileEditForm.occupation}
+                                        onChange={(event) =>
+                                            setProfileEditForm((prev) => ({ ...prev, occupation: event.target.value }))
+                                        }
+                                        disabled={profileEditLoading}
+                                    />
+                                </label>
+                                <label className="text-slate-600">
+                                    State of origin
+                                    <input
+                                        className="field-input"
+                                        value={profileEditForm.stateOfOrigin}
+                                        onChange={(event) =>
+                                            setProfileEditForm((prev) => ({ ...prev, stateOfOrigin: event.target.value }))
+                                        }
+                                        disabled={profileEditLoading}
+                                    />
+                                </label>
+                                <label className="text-slate-600">
+                                    LGA of origin
+                                    <input
+                                        className="field-input"
+                                        value={profileEditForm.lgaOfOrigin}
+                                        onChange={(event) =>
+                                            setProfileEditForm((prev) => ({ ...prev, lgaOfOrigin: event.target.value }))
+                                        }
+                                        disabled={profileEditLoading}
+                                    />
+                                </label>
+                            </div>
+                            <div className="mt-4 flex justify-end">
+                                <button
+                                    type="submit"
+                                    className="btn-primary disabled:opacity-70"
+                                    disabled={profileEditLoading}
+                                >
+                                    {profileEditLoading ? "Saving..." : "Save profile changes"}
+                                </button>
+                            </div>
+                        </form>
+                        )}
+
+                        <div className="surface-card p-4">
                             <p className="text-sm font-semibold text-slate-800">Branch memberships</p>
                             <div className="mt-2 space-y-2">
                                 {selectedMember.branchMemberships.length === 0 ? (
@@ -757,13 +1155,13 @@ export function MemberManagementPanel({
                                             className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 px-3 py-2"
                                         >
                                             <div className="text-sm text-slate-700">
-                                                <p className="font-medium">
-                                                    {resolveBranchLabel(membership.branchId)}
-                                                </p>
+                                                <p className="font-medium">{resolveBranchLabel(membership.branchId)}</p>
                                                 <p className="text-xs text-slate-500">
-                                                    Status: {capitalize(membership.status)} |
-                                                    Requested: {formatDateOrFallback(membership.requestedAt)}
-                                                    {membership.endedAt ? ` | Ended: ${formatDateOrFallback(membership.endedAt)}` : ""}
+                                                    Status: {capitalize(membership.status)} | Requested:{" "}
+                                                    {formatDateOrFallback(membership.requestedAt)}
+                                                    {membership.endedAt
+                                                        ? ` | Ended: ${formatDateOrFallback(membership.endedAt)}`
+                                                        : ""}
                                                 </p>
                                             </div>
                                             {effectiveScopeType !== "class" && (
@@ -773,7 +1171,11 @@ export function MemberManagementPanel({
                                                     onClick={() => handleEndBranchMembership(membership)}
                                                     disabled={membership.status === "ended" || endingBranchId === membership.id}
                                                 >
-                                                    {endingBranchId === membership.id ? "Ending..." : membership.status === "ended" ? "Ended" : "End membership"}
+                                                    {endingBranchId === membership.id
+                                                        ? "Ending..."
+                                                        : membership.status === "ended"
+                                                          ? "Ended"
+                                                          : "End membership"}
                                                 </button>
                                             )}
                                         </div>
@@ -851,6 +1253,16 @@ export function MemberManagementPanel({
                                 >
                                     Reject class
                                 </button>
+                                {resolveClaimStatus(selectedMember) === "unclaimed" && (
+                                    <button
+                                        type="button"
+                                        className="btn-pill border-rose-300 bg-rose-100 text-rose-800 disabled:opacity-70"
+                                        disabled={deleteLoading}
+                                        onClick={handleDeleteImportedMember}
+                                    >
+                                        {deleteLoading ? "Deleting..." : "Delete imported member"}
+                                    </button>
+                                )}
                             </div>
                         </div>
 
@@ -1017,26 +1429,15 @@ function formatDateOrFallback(value?: string | null) {
     return formatDate(value);
 }
 
-function formatDob(profile: AdminMemberDTO["profile"]) {
-    if (!profile) {
-        return "N/A";
+function normalizeClaimStatus(value?: string | null): "claimed" | "unclaimed" | null {
+    if (!value) {
+        return null;
     }
-    const day = profile.dobDay ? String(profile.dobDay).padStart(2, "0") : null;
-    const month = profile.dobMonth ? String(profile.dobMonth).padStart(2, "0") : null;
-    const year = profile.dobYear ? String(profile.dobYear) : null;
-    const parts = [day, month, year].filter(Boolean);
-    return parts.length ? parts.join("/") : "N/A";
-}
-
-function formatResidence(profile: AdminMemberDTO["profile"]) {
-    if (!profile?.residence) {
-        return "N/A";
+    const normalized = `${value}`.trim().toLowerCase();
+    if (normalized === "claimed" || normalized === "unclaimed") {
+        return normalized;
     }
-    const { houseNo, street, area, city, country } = profile.residence;
-    const parts = [houseNo, street, area, city, country]
-        .map((value) => value?.trim())
-        .filter((value): value is string => Boolean(value));
-    return parts.length ? parts.join(", ") : "N/A";
+    return null;
 }
 
 function extractError(error: unknown) {

@@ -39,8 +39,18 @@ import type {
   UserDoc,
 } from './models';
 
+function resolveEffectiveClaimStatus(doc: Pick<UserDoc, 'status' | 'claimStatus' | 'claimedAt'>) {
+  if (doc.claimStatus === 'unclaimed') {
+    return 'unclaimed' as const;
+  }
+  if (doc.claimStatus === 'claimed') {
+    return 'claimed' as const;
+  }
+  return undefined;
+}
+
 export function toUserDto(doc: UserDoc): UserDTO {
-  const claimStatus = doc.claimStatus ?? 'claimed';
+  const claimStatus = resolveEffectiveClaimStatus(doc);
   return {
     id: doc._id.toString(),
     name: doc.name,
@@ -49,7 +59,7 @@ export function toUserDto(doc: UserDoc): UserDTO {
     alumniNumber: doc.alumniNumber ?? null,
     status: doc.status,
     claimStatus,
-    claimedAt: doc.claimedAt?.toISOString() ?? null,
+    claimedAt: claimStatus === 'claimed' ? doc.claimedAt?.toISOString() ?? null : null,
   };
 }
 

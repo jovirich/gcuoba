@@ -24,7 +24,11 @@ export const GET = (request: Request, context: Context) =>
     const classYear = parseClassYear(rawClassYear);
     const url = new URL(request.url);
     const query = url.searchParams.get('query') ?? url.searchParams.get('q') ?? undefined;
-    const members = await listClassClaimMembers(classYear, query);
+    const searchByRaw = (url.searchParams.get('searchBy') ?? '').trim().toLowerCase();
+    const searchBy: 'all' | 'name' | 'email' | 'phone' =
+      searchByRaw === 'name' || searchByRaw === 'email' || searchByRaw === 'phone'
+        ? searchByRaw
+        : 'all';
+    const members = await listClassClaimMembers(classYear, query, searchBy);
     return Response.json({ members });
   });
-
