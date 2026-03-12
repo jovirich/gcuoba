@@ -23,7 +23,7 @@ export const GET = (request: Request, context: Context) =>
       url.searchParams.get('scopeId'),
     );
 
-    const member = await findAdminMember(userId, scope);
+    const member = await findAdminMember(userId, scope, { excludeSystemAccounts: true });
     return Response.json(member);
   });
 

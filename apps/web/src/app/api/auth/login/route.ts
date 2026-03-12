@@ -188,8 +188,10 @@ export const POST = (request: Request) =>
       await ensureGlobalAdminForUser(existing._id.toString());
       await ensureExecutiveMemberFoundation(existing._id.toString());
       await assignAlumniNumberForUserIfClassed(existing._id.toString());
-      if (existing.status !== 'active') {
+      if (existing.status !== 'active' || existing.claimStatus === 'unclaimed') {
         existing.status = 'active';
+        existing.claimStatus = 'claimed';
+        existing.claimedAt = existing.claimedAt ?? new Date();
         await existing.save();
       }
     }

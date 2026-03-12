@@ -44,6 +44,7 @@ type ProfileFormProps = {
   userEmail: string;
   userPhone: string | null;
   userStatus: 'pending' | 'active' | 'suspended';
+  userClaimStatus: 'unclaimed' | 'claimed';
   userAlumniNumber: string | null;
   authToken: string;
   isActive: boolean;
@@ -72,6 +73,7 @@ export function ProfileForm({
   userEmail,
   userPhone,
   userStatus,
+  userClaimStatus,
   userAlumniNumber,
   authToken,
   isActive,
@@ -321,6 +323,12 @@ export function ProfileForm({
             Account status
             <span className="mt-1 block rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-800 capitalize">
               {userStatus}
+            </span>
+          </p>
+          <p className="text-sm text-slate-600">
+            Claim status
+            <span className="mt-1 block rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-800 capitalize">
+              {userClaimStatus}
             </span>
           </p>
           <p className="text-sm text-slate-600">

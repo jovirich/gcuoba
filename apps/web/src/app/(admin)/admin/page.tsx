@@ -46,6 +46,28 @@ function formatCount(value: number) {
   return value.toLocaleString();
 }
 
+function formatMoney(amount: number, currency: string) {
+  try {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  } catch {
+    return `${currency} ${amount.toLocaleString()}`;
+  }
+}
+
+function formatTotalsByCurrency(totals: Map<string, number>) {
+  if (totals.size === 0) {
+    return 'N/A';
+  }
+  return Array.from(totals.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([currency, amount]) => formatMoney(amount, currency))
+    .join(' | ');
+}
+
 export default async function AdminHomePage({ searchParams }: AdminHomePageProps) {
     const session = await getServerSession(authOptions);
     const user = session?.user as { id?: string; name?: string; token?: string; status?: string } | undefined;
@@ -128,6 +150,21 @@ export default async function AdminHomePage({ searchParams }: AdminHomePageProps
       (setupHouses?.length ?? 0) +
       (setupCountries?.length ?? 0);
     const failedEmailJobs = emailQueueStats?.failed ?? 0;
+    const welfareRaisedByCurrency = new Map<string, number>();
+    if (welfareCases) {
+      for (const entry of welfareCases) {
+        const currency = entry.currency || 'NGN';
+        const current = welfareRaisedByCurrency.get(currency) ?? 0;
+        welfareRaisedByCurrency.set(currency, current + Number(entry.totalRaised ?? 0));
+      }
+    }
+    const totalWelfareRaised = formatTotalsByCurrency(welfareRaisedByCurrency);
+
+    const duesOwedByCurrency = new Map<string, number>();
+    if (duesBroadsheet) {
+      duesOwedByCurrency.set(duesBroadsheet.currency || 'NGN', Number(duesBroadsheet.totals.balanceOwing ?? 0));
+    }
+    const totalDuesOwed = formatTotalsByCurrency(duesOwedByCurrency);
 
     const cards: CockpitCard[] = [
       {
@@ -245,6 +282,32 @@ export default async function AdminHomePage({ searchParams }: AdminHomePageProps
                     Core migration surfaces for finance, welfare, governance, and communication workflows.
                 </p>
             </header>
+            <section className="grid gap-3 md:grid-cols-2">
+                <Link
+                  className="surface-card block p-4 transition hover:border-[#efbb71] hover:bg-[#fff8e6]"
+                  href={withScope('/admin/welfare', scope)}
+                >
+                  <p className="text-sm font-semibold text-slate-900">Total welfare raised</p>
+                  <p className={`mt-2 text-2xl font-bold ${welfareCases ? 'text-slate-900' : 'text-slate-400'}`}>
+                    {welfareCases ? totalWelfareRaised : 'N/A'}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {welfareCases ? 'Across all welfare cases in active scope' : 'Welfare totals unavailable'}
+                  </p>
+                </Link>
+                <Link
+                  className="surface-card block p-4 transition hover:border-[#efbb71] hover:bg-[#fff8e6]"
+                  href={withScope('/admin/dues', scope)}
+                >
+                  <p className="text-sm font-semibold text-slate-900">Total dues owed</p>
+                  <p className={`mt-2 text-2xl font-bold ${duesBroadsheet ? 'text-slate-900' : 'text-slate-400'}`}>
+                    {duesBroadsheet ? totalDuesOwed : 'N/A'}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {duesBroadsheet ? 'Outstanding dues balance for current scope' : 'Dues totals unavailable'}
+                  </p>
+                </Link>
+            </section>
             <section className="surface-card p-4">
                 <div className="module-card-head">
                   <h2 className="text-lg font-semibold text-slate-900">Dashboard modules</h2>

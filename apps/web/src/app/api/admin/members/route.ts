@@ -18,7 +18,7 @@ export const GET = (request: Request) =>
       url.searchParams.get('scopeId'),
     );
 
-    const members = await listAdminMembers(scope);
+    const members = await listAdminMembers(scope, { excludeSystemAccounts: true });
     return Response.json(members);
   });
 

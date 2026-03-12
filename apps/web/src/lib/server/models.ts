@@ -7,6 +7,7 @@ import mongoose, {
 } from 'mongoose';
 
 const USER_STATUSES = ['pending', 'active', 'suspended'] as const;
+const USER_CLAIM_STATUSES = ['unclaimed', 'claimed'] as const;
 const PRIVACY_LEVELS = ['public', 'public_to_members', 'private'] as const;
 const BRANCH_MEMBERSHIP_STATUSES = ['requested', 'approved', 'rejected', 'ended'] as const;
 const ROLE_SCOPES = ['global', 'branch', 'class'] as const;
@@ -26,6 +27,8 @@ const UserSchema = new Schema(
     phone: { type: String, default: null },
     alumniNumber: { type: String, trim: true, unique: true, sparse: true },
     status: { type: String, enum: USER_STATUSES, default: 'pending' },
+    claimStatus: { type: String, enum: USER_CLAIM_STATUSES, default: 'claimed' },
+    claimedAt: { type: Date, default: null },
   },
   { collection: 'users', timestamps: true },
 );

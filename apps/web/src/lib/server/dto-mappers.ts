@@ -40,6 +40,7 @@ import type {
 } from './models';
 
 export function toUserDto(doc: UserDoc): UserDTO {
+  const claimStatus = doc.claimStatus ?? 'claimed';
   return {
     id: doc._id.toString(),
     name: doc.name,
@@ -47,6 +48,8 @@ export function toUserDto(doc: UserDoc): UserDTO {
     phone: doc.phone ?? null,
     alumniNumber: doc.alumniNumber ?? null,
     status: doc.status,
+    claimStatus,
+    claimedAt: doc.claimedAt?.toISOString() ?? null,
   };
 }
 

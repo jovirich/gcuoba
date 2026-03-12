@@ -277,7 +277,11 @@ export const PUT = (request: Request, context: Context) =>
       throw new ApiError(404, 'User not found', 'NotFound');
     }
 
-    const nameLocked = user.status !== 'pending' && Boolean(classMembership?.classId);
+    const claimStatus = user.claimStatus ?? 'claimed';
+    const nameLocked =
+      claimStatus === 'claimed' &&
+      user.status !== 'pending' &&
+      Boolean(classMembership?.classId);
     if (nameLocked) {
       const fallbackName = splitDisplayName(user.name);
       const lockedFirstName = existingProfile?.firstName ?? fallbackName.firstName;

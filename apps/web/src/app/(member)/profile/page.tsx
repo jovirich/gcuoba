@@ -36,6 +36,7 @@ export default async function ProfilePage() {
     phone?: string | null;
     alumniNumber?: string | null;
     status?: 'pending' | 'active' | 'suspended';
+    claimStatus?: 'unclaimed' | 'claimed';
     token?: string;
   } | undefined;
   const userId = sessionUser?.id;
@@ -44,6 +45,7 @@ export default async function ProfilePage() {
   const userEmail = sessionUser?.email ?? '';
   const userPhone = sessionUser?.phone ?? null;
   const userStatus = sessionUser?.status ?? 'pending';
+  const userClaimStatus = sessionUser?.claimStatus ?? 'claimed';
   const userAlumniNumber = sessionUser?.alumniNumber ?? null;
 
   if (!userId || !token) {
@@ -51,7 +53,10 @@ export default async function ProfilePage() {
   }
 
   const data = await loadProfileData(userId, token);
-  const isClassApprovedForSelfService = userStatus !== 'pending' && Boolean(data.classMembership?.classId);
+  const isClassApprovedForSelfService =
+    userStatus !== 'pending' &&
+    userClaimStatus === 'claimed' &&
+    Boolean(data.classMembership?.classId);
 
   return (
     <main className="member-page p-4 md:p-6">
@@ -67,6 +72,7 @@ export default async function ProfilePage() {
         userEmail={userEmail}
         userPhone={userPhone}
         userStatus={userStatus}
+        userClaimStatus={userClaimStatus}
         userAlumniNumber={userAlumniNumber}
         authToken={token}
         isActive={sessionUser?.status === 'active'}

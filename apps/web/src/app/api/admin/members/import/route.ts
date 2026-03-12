@@ -32,6 +32,24 @@ function parseOptionalString(raw: FormDataEntryValue | null): string | null {
   return value.length > 0 ? value : null;
 }
 
+function parseRowNumbers(raw: FormDataEntryValue | null): number[] | null {
+  if (typeof raw !== 'string') {
+    return null;
+  }
+  const value = raw.trim();
+  if (!value) {
+    return null;
+  }
+  const parsed = value
+    .split(',')
+    .map((entry) => Number(entry.trim()))
+    .filter((entry) => Number.isInteger(entry) && entry > 0);
+  if (parsed.length === 0) {
+    return null;
+  }
+  return Array.from(new Set(parsed));
+}
+
 export const GET = (request: Request) =>
   withApiHandler(async () => {
     await connectMongo();
@@ -82,6 +100,7 @@ export const POST = (request: Request) =>
     const sendWelcomeEmail = parseBoolean(formData.get('sendWelcomeEmail'));
     const targetClassId = parseOptionalString(formData.get('targetClassId'));
     const targetBranchId = parseOptionalString(formData.get('targetBranchId'));
+    const rowNumbers = parseRowNumbers(formData.get('rowNumbers'));
     const filePart = formData.get('file');
     if (!(filePart instanceof File)) {
       throw new ApiError(400, 'CSV file is required.', 'BadRequest');
@@ -98,8 +117,8 @@ export const POST = (request: Request) =>
       sendWelcomeEmail,
       targetClassId,
       targetBranchId,
+      rowNumbers,
     });
 
     return Response.json(result);
   });
-

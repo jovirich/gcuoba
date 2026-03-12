@@ -2,6 +2,7 @@
 
 import type { BranchDTO, ClassSetDTO } from '@gcuoba/types';
 import { API_BASE_URL, fetchJson } from '@/lib/api';
+import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 
 type ScopeType = 'global' | 'branch' | 'class';
@@ -33,6 +34,15 @@ type ImportResult = {
   rows: RowResult[];
 };
 
+type ActivationResult = {
+  classId: string;
+  classLabel: string;
+  classYear: number;
+  totalClassMembers: number;
+  pendingFound: number;
+  activated: number;
+};
+
 type Props = {
   authToken: string;
   classes: ClassSetDTO[];
@@ -48,15 +58,17 @@ export function BulkMemberImportPanel({
   activeScopeType,
   activeScopeId,
 }: Props) {
+  const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [defaultPassword, setDefaultPassword] = useState('Gcuoba2026');
   const [sendWelcomeEmail, setSendWelcomeEmail] = useState(false);
   const [targetClassId, setTargetClassId] = useState('');
   const [targetBranchId, setTargetBranchId] = useState('');
-  const [busy, setBusy] = useState<'template' | 'preview' | 'commit' | null>(null);
+  const [busy, setBusy] = useState<'template' | 'preview' | 'commit' | 'activate' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
+  const [removedRows, setRemovedRows] = useState<number[]>([]);
 
   const isGlobalScope = !activeScopeType || activeScopeType === 'global';
   const isBranchScope = activeScopeType === 'branch';
@@ -72,6 +84,33 @@ export function BulkMemberImportPanel({
     const query = params.toString();
     return query ? `?${query}` : '';
   }, [activeScopeId, activeScopeType]);
+  const removedRowsSet = useMemo(() => new Set(removedRows), [removedRows]);
+  const visibleRows = useMemo(
+    () => (result ? result.rows.filter((row) => !removedRowsSet.has(row.rowNumber)) : []),
+    [removedRowsSet, result],
+  );
+  const visibleSummary = useMemo(() => summarizeRows(visibleRows), [visibleRows]);
+  const removedCount = result ? Math.max(0, result.rows.length - visibleRows.length) : 0;
+
+  function removeMatchingRows(predicate: (row: RowResult) => boolean) {
+    if (!result) {
+      return;
+    }
+    const next = new Set(removedRows);
+    result.rows.forEach((row) => {
+      if (predicate(row)) {
+        next.add(row.rowNumber);
+      }
+    });
+    setRemovedRows(Array.from(next));
+  }
+
+  function removeSingleRow(rowNumber: number) {
+    if (removedRowsSet.has(rowNumber)) {
+      return;
+    }
+    setRemovedRows((prev) => [...prev, rowNumber]);
+  }
 
   async function downloadTemplate() {
     setBusy('template');
@@ -107,8 +146,18 @@ export function BulkMemberImportPanel({
       setError('Select a CSV file first.');
       return;
     }
+    const selectedRowNumbers =
+      mode === 'commit' && result
+        ? result.rows
+            .filter((row) => !removedRowsSet.has(row.rowNumber))
+            .map((row) => row.rowNumber)
+        : [];
+    if (mode === 'commit' && selectedRowNumbers.length === 0) {
+      setError('No preview rows selected for import. Restore rows or run a new preview.');
+      return;
+    }
     if (mode === 'commit') {
-      const proceed = window.confirm('Import valid rows now? Existing members may be updated.');
+      const proceed = window.confirm('Import selected preview rows now? Existing members may be updated.');
       if (!proceed) {
         return;
       }
@@ -128,19 +177,66 @@ export function BulkMemberImportPanel({
       if (isGlobalScope && targetBranchId) {
         form.append('targetBranchId', targetBranchId);
       }
+      if (mode === 'commit') {
+        form.append('rowNumbers', selectedRowNumbers.join(','));
+      }
       const response = await fetchJson<ImportResult>(`/admin/members/import${scopeQuery}`, {
         method: 'POST',
         body: form,
         token: authToken,
       });
-      setResult(response);
       if (mode === 'preview') {
+        setResult(response);
+        setRemovedRows([]);
         setMessage(`Preview ready. ${response.summary.validRows} valid row(s), ${response.summary.failedRows} row(s) with issues.`);
       } else {
+        setResult(null);
+        setRemovedRows([]);
         setMessage(`Import complete. Created: ${response.summary.created}, Updated: ${response.summary.updated}, Failed: ${response.summary.failedRows}.`);
+        router.refresh();
       }
     } catch (importError) {
       setError(extractError(importError));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function activatePendingAsUnclaimed() {
+    if (isBranchScope) {
+      setError('This action is not available in branch scope.');
+      return;
+    }
+    if (isGlobalScope && !targetClassId) {
+      setError('Select a target class first.');
+      return;
+    }
+    const proceed = window.confirm(
+      'Activate pending members in this class as unclaimed? This enables dues posting while members still complete claim onboarding.',
+    );
+    if (!proceed) {
+      return;
+    }
+    setBusy('activate');
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await fetchJson<ActivationResult>(`/admin/members/activate-unclaimed${scopeQuery}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          classId: isGlobalScope ? targetClassId : undefined,
+        }),
+        token: authToken,
+      });
+      setResult(null);
+      setRemovedRows([]);
+      setMessage(
+        `Activation complete for ${response.classYear} - ${response.classLabel}. Pending found: ${response.pendingFound}, activated: ${response.activated}, class members: ${response.totalClassMembers}.`,
+      );
+      router.refresh();
+    } catch (activationError) {
+      setError(extractError(activationError));
     } finally {
       setBusy(null);
     }
@@ -254,9 +350,17 @@ export function BulkMemberImportPanel({
           type="button"
           className="btn-secondary"
           onClick={() => void runImport('commit')}
-          disabled={isBranchScope || busy !== null || !result || result.summary.validRows === 0}
+          disabled={isBranchScope || busy !== null || !result || visibleSummary.validRows === 0}
         >
           {busy === 'commit' ? 'Importing...' : 'Import valid rows'}
+        </button>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={() => void activatePendingAsUnclaimed()}
+          disabled={isBranchScope || busy !== null}
+        >
+          {busy === 'activate' ? 'Activating...' : 'Activate pending as unclaimed'}
         </button>
       </div>
 
@@ -265,13 +369,41 @@ export function BulkMemberImportPanel({
 
       {result && (
         <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => removeMatchingRows((row) => row.action === 'update' && row.status === 'valid')}
+            >
+              Remove already registered
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => removeMatchingRows((row) => row.status === 'error')}
+            >
+              Remove rows with errors
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => setRemovedRows([])}
+              disabled={removedCount === 0}
+            >
+              Restore removed rows
+            </button>
+            <p className="text-xs text-slate-500">
+              {removedCount > 0 ? `${removedCount} row(s) removed from this preview.` : 'All preview rows included.'}
+            </p>
+          </div>
+
           <div className="grid gap-2 md:grid-cols-6">
-            <Stat label="Rows" value={String(result.summary.totalRows)} />
-            <Stat label="Valid" value={String(result.summary.validRows)} />
-            <Stat label="Failed" value={String(result.summary.failedRows)} />
-            <Stat label="Create" value={String(result.summary.created)} />
-            <Stat label="Update" value={String(result.summary.updated)} />
-            <Stat label="Skipped" value={String(result.summary.skipped)} />
+            <Stat label="Rows" value={String(visibleSummary.totalRows)} />
+            <Stat label="Valid" value={String(visibleSummary.validRows)} />
+            <Stat label="Failed" value={String(visibleSummary.failedRows)} />
+            <Stat label="Create" value={String(visibleSummary.created)} />
+            <Stat label="Update" value={String(visibleSummary.updated)} />
+            <Stat label="Skipped" value={String(visibleSummary.skipped)} />
           </div>
 
           <div className="max-h-[360px] overflow-y-auto rounded-xl border border-slate-200">
@@ -280,14 +412,17 @@ export function BulkMemberImportPanel({
                 <tr className="text-xs uppercase text-slate-500">
                   <th className="py-2">Row</th>
                   <th className="py-2">Action</th>
-                  <th className="py-2">Member</th>
+                  <th className="py-2">Name</th>
+                  <th className="py-2">Email</th>
+                  <th className="py-2">Phone</th>
                   <th className="py-2">Class</th>
                   <th className="py-2">Branch</th>
+                  <th className="py-2">Manage</th>
                   <th className="py-2">Notes</th>
                 </tr>
               </thead>
               <tbody>
-                {result.rows.map((row) => (
+                {visibleRows.map((row) => (
                   <tr key={`${row.rowNumber}-${row.email}-${row.memberName}`} className={row.status === 'error' ? 'bg-rose-50/40' : ''}>
                     <td className="py-2 text-xs text-slate-600">{row.rowNumber}</td>
                     <td className="py-2 text-xs">
@@ -295,12 +430,20 @@ export function BulkMemberImportPanel({
                         {row.status === 'error' ? 'error' : row.action}
                       </span>
                     </td>
-                    <td className="py-2 text-sm">
-                      <p className="font-semibold text-slate-900">{row.memberName}</p>
-                      <p className="text-xs text-slate-500">{row.email}</p>
-                    </td>
+                    <td className="py-2 text-sm font-semibold text-slate-900">{row.memberName}</td>
+                    <td className="py-2 text-sm text-slate-700">{row.email || 'N/A'}</td>
+                    <td className="py-2 text-sm text-slate-700">{row.phone || 'N/A'}</td>
                     <td className="py-2 text-sm text-slate-700">{row.classLabel}</td>
                     <td className="py-2 text-sm text-slate-700">{row.branchLabel ?? 'N/A'}</td>
+                    <td className="py-2 text-xs text-slate-600">
+                      <button
+                        type="button"
+                        className="btn-pill border-rose-200 bg-rose-50 text-rose-700"
+                        onClick={() => removeSingleRow(row.rowNumber)}
+                      >
+                        Remove
+                      </button>
+                    </td>
                     <td className="py-2 text-xs text-slate-600">
                       {row.errors.length > 0 && <p className="text-rose-700">{row.errors.join(' | ')}</p>}
                       {row.warnings.length > 0 && <p className="text-amber-700">{row.warnings.join(' | ')}</p>}
@@ -308,6 +451,13 @@ export function BulkMemberImportPanel({
                     </td>
                   </tr>
                 ))}
+                {visibleRows.length === 0 && (
+                  <tr>
+                    <td className="py-3 text-sm text-slate-500" colSpan={9}>
+                      No rows currently selected in preview.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -347,4 +497,37 @@ function Stat({ label, value }: { label: string; value: string }) {
       <p className="text-sm font-semibold text-slate-900">{value}</p>
     </div>
   );
+}
+
+function summarizeRows(rows: RowResult[]) {
+  let validRows = 0;
+  let failedRows = 0;
+  let created = 0;
+  let updated = 0;
+  let skipped = 0;
+
+  rows.forEach((row) => {
+    if (row.status === 'valid') {
+      validRows += 1;
+      if (row.action === 'create') {
+        created += 1;
+      } else if (row.action === 'update') {
+        updated += 1;
+      } else {
+        skipped += 1;
+      }
+      return;
+    }
+    failedRows += 1;
+    skipped += 1;
+  });
+
+  return {
+    totalRows: rows.length,
+    validRows,
+    failedRows,
+    created,
+    updated,
+    skipped,
+  };
 }

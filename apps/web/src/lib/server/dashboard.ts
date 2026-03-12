@@ -374,7 +374,7 @@ export async function buildDashboardSummary(userId: string): Promise<DashboardSu
   await ensureCurrentYearDuesInvoices({ userId });
   const [userDoc, branches, branchMemberships, classMembership, outstandingInvoices, welfareCases, duesSummary] =
     await Promise.all([
-      UserModel.findById(userId).select('name email phone status').exec(),
+      UserModel.findById(userId).select('name email phone status claimStatus claimedAt').exec(),
       BranchModel.find().sort({ name: 1 }).exec(),
       BranchMembershipModel.find({ userId }).sort({ requestedAt: -1, createdAt: -1 }).exec(),
       ClassMembershipModel.findOne({ userId }).exec(),

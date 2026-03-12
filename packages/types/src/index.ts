@@ -1,4 +1,5 @@
 export type MemberStatus = 'pending' | 'active' | 'suspended';
+export type ClaimStatus = 'unclaimed' | 'claimed';
 
 export type BranchMembershipStatus = 'requested' | 'approved' | 'rejected' | 'ended';
 export type PrivacyLevel = 'public' | 'public_to_members' | 'private';
@@ -26,6 +27,8 @@ export interface UserDTO {
   phone?: string | null;
   alumniNumber?: string | null;
   status: MemberStatus;
+  claimStatus?: ClaimStatus;
+  claimedAt?: string | null;
 }
 
 export interface ProfileDTO {

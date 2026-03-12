@@ -3,11 +3,13 @@ import jwt from 'jsonwebtoken';
 import { ApiError } from './api-error';
 
 type TokenStatus = 'pending' | 'active' | 'suspended';
+type TokenClaimStatus = 'unclaimed' | 'claimed';
 
 export type AccessTokenPayload = {
   sub: string;
   email: string;
   status: TokenStatus;
+  claimStatus?: TokenClaimStatus;
   iat?: number;
   exp?: number;
 };
@@ -34,6 +36,7 @@ export function signAccessToken(user: UserDTO): string {
       sub: user.id,
       email: user.email,
       status: user.status,
+      claimStatus: user.claimStatus,
     },
     getJwtSecret(),
     { expiresIn: '7d' },

@@ -6,12 +6,42 @@ import { LogoutButton } from '@/components/auth/logout-button';
 import { MemberNav } from '@/components/member/member-nav';
 import { RoleSwitcher } from '@/components/role-switcher';
 import { fetchUserAssignments } from '@/lib/role-assignments';
+import { connectMongo } from '@/lib/server/mongo';
+import { ClassMembershipModel, ClassModel } from '@/lib/server/models';
+
+async function resolveClaimRedirectPath(userId: string): Promise<string | null> {
+  await connectMongo();
+  const membership = await ClassMembershipModel.findOne({ userId }).select('classId').lean<{ classId?: string }>().exec();
+  if (!membership?.classId) {
+    return null;
+  }
+  const classDoc = await ClassModel.findById(membership.classId)
+    .select('entryYear')
+    .lean<{ entryYear?: number }>()
+    .exec();
+  if (!classDoc?.entryYear) {
+    return null;
+  }
+  return `/claim/class/${classDoc.entryYear}`;
+}
 
 export default async function MemberLayout({ children }: { children: ReactNode }) {
   const session = await getServerSession(authOptions);
-  const user = session?.user as { id?: string; name?: string; status?: string; token?: string } | undefined;
+  const user = session?.user as {
+    id?: string;
+    name?: string;
+    status?: string;
+    claimStatus?: 'unclaimed' | 'claimed';
+    token?: string;
+  } | undefined;
   if (!user?.id || !user.token) {
     redirect('/login');
+  }
+  if (user.status === 'active' && user.claimStatus === 'unclaimed') {
+    const claimRedirectPath = await resolveClaimRedirectPath(user.id);
+    if (claimRedirectPath) {
+      redirect(claimRedirectPath);
+    }
   }
   const assignments = await fetchUserAssignments(user.token);
 

@@ -99,6 +99,7 @@ type ExecuteBulkMemberImportInput = {
   sendWelcomeEmail: boolean;
   targetClassId?: string | null;
   targetBranchId?: string | null;
+  rowNumbers?: number[] | null;
 };
 
 type ClassRef = { id: string; label: string; entryYear: number };
@@ -109,6 +110,7 @@ type ExistingUserLite = {
   email: string;
   phone?: string | null;
   status: 'pending' | 'active' | 'suspended';
+  claimStatus?: 'unclaimed' | 'claimed';
 };
 
 const TITLE_ALLOWLIST = new Set(['mr', 'mrs', 'ms', 'dr', 'prof', 'chief']);
@@ -146,9 +148,90 @@ function normalizeEmail(value: string | undefined) {
   return value?.trim().toLowerCase() || '';
 }
 
+function expandScientificNotation(value: string): string | null {
+  const match = value.trim().match(/^([+-]?\d+)(?:\.(\d+))?[eE]([+-]?\d+)$/);
+  if (!match) {
+    return null;
+  }
+  const integerPart = match[1]?.replace('+', '') ?? '';
+  const fractionPart = match[2] ?? '';
+  const exponent = Number(match[3] ?? '');
+  if (!Number.isInteger(exponent)) {
+    return null;
+  }
+
+  const sign = integerPart.startsWith('-') ? '-' : '';
+  const integerDigits = integerPart.replace('-', '');
+  const digits = `${integerDigits}${fractionPart}`.replace(/^0+/, '') || '0';
+  const decimalIndex = integerDigits.length + exponent;
+
+  if (decimalIndex <= 0) {
+    return `${sign}0`;
+  }
+  if (decimalIndex >= digits.length) {
+    return `${sign}${digits}${'0'.repeat(decimalIndex - digits.length)}`;
+  }
+  return `${sign}${digits.slice(0, decimalIndex)}${digits.slice(decimalIndex)}`;
+}
+
 function normalizePhone(value: string | undefined) {
   const trimmed = value?.trim() || '';
-  return trimmed || '';
+  if (!trimmed) {
+    return '';
+  }
+  const scientific = expandScientificNotation(trimmed);
+  const source = scientific ?? trimmed;
+  const keepLeadingPlus = source.startsWith('+');
+  const digits = source.replace(/\D/g, '');
+  if (!digits) {
+    return '';
+  }
+  return keepLeadingPlus ? `+${digits}` : digits;
+}
+
+function normalizePhoneInput(value: string | undefined): {
+  phone: string;
+  warnings: string[];
+  errors: string[];
+} {
+  const raw = value?.trim() || '';
+  if (!raw) {
+    return { phone: '', warnings: [], errors: [] };
+  }
+
+  const warnings: string[] = [];
+  const errors: string[] = [];
+  const scientific = expandScientificNotation(raw);
+  if (scientific) {
+    warnings.push('Phone converted from Excel scientific notation; verify digits.');
+  }
+
+  const normalized = normalizePhone(raw);
+  if (!normalized) {
+    return { phone: '', warnings, errors: ['Phone is invalid.'] };
+  }
+
+  const digits = normalized.startsWith('+') ? normalized.slice(1) : normalized;
+  let canonical = normalized;
+  if (!normalized.startsWith('+')) {
+    if (digits.startsWith('234') && digits.length === 13) {
+      canonical = `+${digits}`;
+    } else if (digits.startsWith('0') && digits.length === 11) {
+      canonical = `+234${digits.slice(1)}`;
+    } else if (digits.length >= 10 && digits.length <= 15) {
+      canonical = `+${digits}`;
+    }
+  }
+
+  const canonicalDigits = canonical.startsWith('+') ? canonical.slice(1) : canonical;
+  if (canonicalDigits.length < 10 || canonicalDigits.length > 15) {
+    errors.push('Phone length is invalid. Use full number format.');
+  }
+  if (scientific && /0{4,}$/.test(canonicalDigits)) {
+    warnings.push('Phone ends with many zeros after conversion; Excel may have truncated original digits.');
+  }
+
+  return { phone: canonical, warnings, errors };
 }
 
 function parseOptionalInt(value?: string) {
@@ -474,8 +557,17 @@ async function findExistingUsers(rows: ParsedCsvRow[]) {
     return [];
   }
   return UserModel.find({ $or: query })
-    .select('_id name email phone status')
-    .lean<Array<{ _id: Types.ObjectId; name: string; email: string; phone?: string | null; status: 'pending' | 'active' | 'suspended' }>>()
+    .select('_id name email phone status claimStatus')
+    .lean<
+      Array<{
+        _id: Types.ObjectId;
+        name: string;
+        email: string;
+        phone?: string | null;
+        status: 'pending' | 'active' | 'suspended';
+        claimStatus?: 'unclaimed' | 'claimed';
+      }>
+    >()
     .exec();
 }
 
@@ -509,7 +601,7 @@ async function findExistingUsersByClassAndName(
       .lean<Array<{ userId: string; firstName: string; lastName: string }>>()
       .exec(),
     UserModel.find({ _id: { $in: userIds } })
-      .select('_id email phone status')
+      .select('_id email phone status claimStatus')
       .lean<ExistingUserLite[]>()
       .exec(),
   ]);
@@ -564,6 +656,9 @@ function normalizeRows(
       .filter((user) => user.phone)
       .map((user) => [normalizePhone(user.phone as string), user]),
   );
+  const seenEmailsInFile = new Map<string, number>();
+  const seenPhonesInFile = new Map<string, number>();
+  const seenClassNameInFile = new Map<string, number>();
 
   rows.forEach((row) => {
     const errors: string[] = [];
@@ -589,6 +684,15 @@ function normalizeRows(
     if (scope.kind === 'class' && classId && classId !== scope.classId) {
       errors.push('Class scope can only import members into its own class.');
     }
+    if (classId && firstName && lastName) {
+      const classNameKey = classMemberNameKey(classId, firstName, lastName);
+      const firstClassNameRow = seenClassNameInFile.get(classNameKey);
+      if (firstClassNameRow !== undefined) {
+        errors.push(`Duplicate class/name pair in this CSV (already used on row ${firstClassNameRow}).`);
+      } else {
+        seenClassNameInFile.set(classNameKey, row.rowNumber);
+      }
+    }
 
     const nameMatches = classId
       ? existingUsersByClassAndName.get(classMemberNameKey(classId, firstName, lastName)) ?? []
@@ -598,7 +702,10 @@ function normalizeRows(
       errors.push('Multiple existing members in this class share this name. Provide phone or email to disambiguate.');
     }
 
-    const requestedPhone = normalizePhone(row.phone);
+    const requestedPhoneInfo = normalizePhoneInput(row.phone);
+    const requestedPhone = requestedPhoneInfo.phone;
+    warnings.push(...requestedPhoneInfo.warnings);
+    errors.push(...requestedPhoneInfo.errors);
     const requestedEmail = normalizeEmail(row.email);
     let finalEmail = requestedEmail;
     if (!requestedEmail) {
@@ -616,8 +723,15 @@ function normalizeRows(
     if (!finalEmail.includes('@')) {
       errors.push('Email is invalid.');
     }
+    const emailKey = finalEmail.toLowerCase();
+    const firstEmailRow = seenEmailsInFile.get(emailKey);
+    if (firstEmailRow !== undefined) {
+      errors.push(`Duplicate email in this CSV (already used on row ${firstEmailRow}).`);
+    } else {
+      seenEmailsInFile.set(emailKey, row.rowNumber);
+    }
 
-    const matchedByEmail = userByEmail.get(finalEmail.toLowerCase());
+    const matchedByEmail = userByEmail.get(emailKey);
     const retainedPhone = normalizePhone(matchedByEmail?.phone ?? matchedByName?.phone ?? undefined);
     let finalPhone = requestedPhone || retainedPhone;
     if (!requestedPhone) {
@@ -630,6 +744,12 @@ function normalizeRows(
     }
     if (finalPhone) {
       usedPhones.add(finalPhone);
+      const firstPhoneRow = seenPhonesInFile.get(finalPhone);
+      if (firstPhoneRow !== undefined) {
+        errors.push(`Duplicate phone in this CSV (already used on row ${firstPhoneRow}).`);
+      } else {
+        seenPhonesInFile.set(finalPhone, row.rowNumber);
+      }
     }
 
     const matchedByPhone = finalPhone ? userByPhone.get(finalPhone) : undefined;
@@ -644,6 +764,9 @@ function normalizeRows(
     }
 
     const existingUser = matchedByEmail ?? matchedByPhone ?? matchedByName ?? null;
+    if (existingUser) {
+      warnings.push('Existing registered member detected; this row will update the current profile.');
+    }
     if (existingUser && !matchedByEmail && !matchedByPhone && matchedByName) {
       warnings.push('Matched existing member by class and name; row will update existing record.');
     }
@@ -653,6 +776,7 @@ function normalizeRows(
         email: finalEmail,
         phone: finalPhone,
         status: 'pending',
+        claimStatus: 'unclaimed',
       });
       if (finalPhone) {
         userByPhone.set(finalPhone, {
@@ -660,6 +784,7 @@ function normalizeRows(
           email: finalEmail,
           phone: finalPhone,
           status: 'pending',
+          claimStatus: 'unclaimed',
         });
       }
     }
@@ -736,7 +861,7 @@ async function applyNormalizedRow(
   actorUserId: string,
   row: NormalizedRow,
   action: RowAction,
-  existingUser: { _id: Types.ObjectId; email: string; phone?: string | null; status: 'pending' | 'active' | 'suspended' } | null,
+  existingUser: ExistingUserLite | null,
   passwordHash: string,
   sendWelcomeEmail: boolean,
 ) {
@@ -749,6 +874,8 @@ async function applyNormalizedRow(
           passwordHash,
           phone: row.phone,
           status: row.status,
+          claimStatus: 'unclaimed',
+          claimedAt: null,
         })
       : await UserModel.findByIdAndUpdate(
           existingUser?._id,
@@ -760,6 +887,9 @@ async function applyNormalizedRow(
                 ? { email: row.email }
                 : {}),
               status: row.status,
+              ...(existingUser?.status === 'pending' || existingUser?.claimStatus === 'unclaimed'
+                ? { claimStatus: 'unclaimed', claimedAt: null }
+                : {}),
             },
           },
           { new: true },
@@ -842,6 +972,23 @@ export async function executeBulkMemberImport(input: ExecuteBulkMemberImportInpu
   const defaultPassword = normalizeDefaultPassword(input.defaultPassword);
 
   const parsedRows = parseRows(input.csvText);
+  let activeRows = parsedRows;
+  if (input.rowNumbers && input.rowNumbers.length > 0) {
+    const allowedNumbers = new Set(input.rowNumbers);
+    const availableNumbers = new Set(parsedRows.map((row) => row.rowNumber));
+    const unknownNumbers = input.rowNumbers.filter((rowNumber) => !availableNumbers.has(rowNumber));
+    if (unknownNumbers.length > 0) {
+      throw new ApiError(
+        400,
+        `Some selected rows were not found in the CSV (${unknownNumbers.join(', ')}).`,
+        'BadRequest',
+      );
+    }
+    activeRows = parsedRows.filter((row) => allowedNumbers.has(row.rowNumber));
+    if (activeRows.length === 0) {
+      throw new ApiError(400, 'No selected rows were found for import.', 'BadRequest');
+    }
+  }
   const refs = await loadReferenceData();
 
   if (input.targetClassId && !refs.classRefs.some((entry) => entry.id === input.targetClassId)) {
@@ -851,12 +998,12 @@ export async function executeBulkMemberImport(input: ExecuteBulkMemberImportInpu
     throw new ApiError(400, 'Selected target branch does not exist.', 'BadRequest');
   }
 
-  const classIdsFromRows = parsedRows
+  const classIdsFromRows = activeRows
     .map((row) => findClassId(row, input.scope, refs.classRefs, input.targetClassId))
     .filter((value): value is string => Boolean(value));
 
   const [existingUsersByContact, existingByClassAndNameResult] = await Promise.all([
-    findExistingUsers(parsedRows),
+    findExistingUsers(activeRows),
     findExistingUsersByClassAndName(classIdsFromRows),
   ]);
 
@@ -874,7 +1021,7 @@ export async function executeBulkMemberImport(input: ExecuteBulkMemberImportInpu
   );
 
   const normalizedRows = normalizeRows(
-    parsedRows,
+    activeRows,
     input.scope,
     refs,
     existingUsers,
@@ -900,7 +1047,7 @@ export async function executeBulkMemberImport(input: ExecuteBulkMemberImportInpu
       failedRows += 1;
       skipped += 1;
       rowResults.push({
-        rowNumber: entry.normalized?.rowNumber ?? parsedRows[rowResults.length]?.rowNumber ?? rowResults.length + 2,
+        rowNumber: entry.normalized?.rowNumber ?? activeRows[rowResults.length]?.rowNumber ?? rowResults.length + 2,
         action: 'skip',
         status: 'error',
         memberName: 'Invalid row',
@@ -925,13 +1072,13 @@ export async function executeBulkMemberImport(input: ExecuteBulkMemberImportInpu
           input.actorUserId,
           normalized,
           action,
-          existingUser as { _id: Types.ObjectId; email: string; phone?: string | null; status: 'pending' | 'active' | 'suspended' } | null,
+          existingUser as ExistingUserLite | null,
           passwordHash,
           input.sendWelcomeEmail,
         );
         if (action === 'create') {
           created += 1;
-          const createdUser = await UserModel.findById(userId).select('_id email phone status').lean<{ _id: Types.ObjectId; email: string; phone?: string | null; status: 'pending' | 'active' | 'suspended' }>().exec();
+          const createdUser = await UserModel.findById(userId).select('_id email phone status claimStatus').lean<ExistingUserLite>().exec();
           if (createdUser) {
             userByEmail.set(createdUser.email.toLowerCase(), createdUser);
             if (createdUser.phone) {
@@ -980,7 +1127,7 @@ export async function executeBulkMemberImport(input: ExecuteBulkMemberImportInpu
   return {
     mode: input.mode,
     summary: {
-      totalRows: parsedRows.length,
+      totalRows: activeRows.length,
       validRows,
       failedRows,
       created,

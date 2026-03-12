@@ -17,6 +17,7 @@ import {
 } from './dto-mappers';
 import {
   BranchMembershipModel,
+  ClassModel,
   ClassMembershipModel,
   ProfileModel,
   RoleAssignmentModel,
@@ -33,6 +34,31 @@ export type AdminMemberAccessScope =
   | { kind: 'managed'; branchIds: string[]; classIds: string[] };
 
 type ScopeType = 'global' | 'branch' | 'class';
+
+const DEFAULT_MEMBER_MODULE_EXCLUDED_EMAILS = [
+  'visual.qa@gcuoba.local',
+  'ejovi.ekakitie@hotmail.com',
+] as const;
+
+function memberModuleExcludedEmails() {
+  const raw = process.env.MEMBER_MODULE_EXCLUDED_EMAILS;
+  if (!raw) {
+    return new Set<string>(DEFAULT_MEMBER_MODULE_EXCLUDED_EMAILS);
+  }
+  return new Set(
+    raw
+      .split(',')
+      .map((entry) => entry.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+function isExcludedFromMemberModule(email?: string | null) {
+  if (!email) {
+    return false;
+  }
+  return memberModuleExcludedEmails().has(email.trim().toLowerCase());
+}
 
 function activeAssignmentFilter() {
   return {
@@ -281,7 +307,10 @@ function buildMemberPayload(
   };
 }
 
-export async function listAdminMembers(scope: AdminMemberAccessScope): Promise<AdminMemberDTO[]> {
+export async function listAdminMembers(
+  scope: AdminMemberAccessScope,
+  options?: { excludeSystemAccounts?: boolean },
+): Promise<AdminMemberDTO[]> {
   const [branchDocs, classDocs, assignmentDocs] = await Promise.all([
     BranchMembershipModel.find().lean().exec(),
     ClassMembershipModel.find().lean().exec(),
@@ -301,11 +330,16 @@ export async function listAdminMembers(scope: AdminMemberAccessScope): Promise<A
     ? await UserModel.find({
         _id: { $in: Array.from(scopedUserIds).filter((id) => Types.ObjectId.isValid(id)) },
       })
-        .select('name email phone status')
+        .select('name email phone status claimStatus claimedAt')
         .exec()
-    : await UserModel.find().select('name email phone status').exec();
+    : await UserModel.find().select('name email phone status claimStatus claimedAt').exec();
 
-  const users = usersDocs.map((doc) => toUserDto(doc));
+  const scopedUsersDocs =
+    options?.excludeSystemAccounts
+      ? usersDocs.filter((doc) => !isExcludedFromMemberModule(doc.email))
+      : usersDocs;
+
+  const users = scopedUsersDocs.map((doc) => toUserDto(doc));
   const userIds = users.map((user) => user.id);
 
   const profileDocs = userIds.length
@@ -326,9 +360,13 @@ export async function listAdminMembers(scope: AdminMemberAccessScope): Promise<A
 export async function findAdminMember(
   userId: string,
   scope: AdminMemberAccessScope,
+  options?: { excludeSystemAccounts?: boolean },
 ): Promise<AdminMemberDTO> {
-  const user = await UserModel.findById(userId).select('name email phone status').exec();
+  const user = await UserModel.findById(userId).select('name email phone status claimStatus claimedAt').exec();
   if (!user) {
+    throw new ApiError(404, 'User not found', 'NotFound');
+  }
+  if (options?.excludeSystemAccounts && isExcludedFromMemberModule(user.email)) {
     throw new ApiError(404, 'User not found', 'NotFound');
   }
 
@@ -362,7 +400,7 @@ export async function updateAdminMemberStatus(
   await ensureMemberInScope(userId, scope);
 
   const user = await UserModel.findByIdAndUpdate(userId, { status }, { new: true })
-    .select('name email phone status')
+    .select('name email phone status claimStatus claimedAt')
     .exec();
   if (!user) {
     throw new ApiError(404, 'User not found', 'NotFound');
@@ -372,6 +410,118 @@ export async function updateAdminMemberStatus(
     await ensureCurrentYearDuesInvoices({ userId });
   }
   return toUserDto(user);
+}
+
+function resolveClaimActivationClassId(scope: AdminMemberAccessScope, classIdRaw?: string | null) {
+  if (scope.kind === 'branch') {
+    throw new ApiError(403, 'Class member activation is not available in branch scope', 'Forbidden');
+  }
+  if (scope.kind === 'class') {
+    return scope.classId;
+  }
+  const classId = classIdRaw?.trim() || null;
+  if (!classId) {
+    throw new ApiError(400, 'classId is required for this scope', 'BadRequest');
+  }
+  if (scope.kind === 'managed' && !scope.classIds.includes(classId)) {
+    throw new ApiError(403, 'Not authorized for this class scope', 'Forbidden');
+  }
+  return classId;
+}
+
+export async function activatePendingClassMembersAsUnclaimed(
+  scope: AdminMemberAccessScope,
+  classIdRaw?: string | null,
+): Promise<{
+  classId: string;
+  classLabel: string;
+  classYear: number;
+  totalClassMembers: number;
+  pendingFound: number;
+  activated: number;
+}> {
+  const classId = resolveClaimActivationClassId(scope, classIdRaw);
+  const classDoc = await ClassModel.findById(classId)
+    .select('label entryYear')
+    .lean<{ label?: string; entryYear?: number }>()
+    .exec();
+  if (!classDoc?.label || !classDoc.entryYear) {
+    throw new ApiError(404, 'Class not found', 'NotFound');
+  }
+
+  const classMemberships = await ClassMembershipModel.find({ classId })
+    .select('userId')
+    .lean<Array<{ userId: string }>>()
+    .exec();
+  const classUserIds = classMemberships
+    .map((entry) => entry.userId)
+    .filter((entry): entry is string => Boolean(entry) && Types.ObjectId.isValid(entry));
+  if (classUserIds.length === 0) {
+    return {
+      classId,
+      classLabel: classDoc.label,
+      classYear: classDoc.entryYear,
+      totalClassMembers: 0,
+      pendingFound: 0,
+      activated: 0,
+    };
+  }
+
+  const users = await UserModel.find({ _id: { $in: classUserIds } })
+    .select('_id status')
+    .lean<Array<{ _id: Types.ObjectId; status: 'pending' | 'active' | 'suspended' }>>()
+    .exec();
+  const pendingUserIds = users
+    .filter((entry) => entry.status === 'pending')
+    .map((entry) => entry._id.toString());
+
+  if (pendingUserIds.length === 0) {
+    return {
+      classId,
+      classLabel: classDoc.label,
+      classYear: classDoc.entryYear,
+      totalClassMembers: classUserIds.length,
+      pendingFound: 0,
+      activated: 0,
+    };
+  }
+
+  await UserModel.updateMany(
+    { _id: { $in: pendingUserIds } },
+    { $set: { status: 'active', claimStatus: 'unclaimed', claimedAt: null } },
+  ).exec();
+
+  const approvedBranchMemberships = await BranchMembershipModel.find({
+    userId: { $in: pendingUserIds },
+    status: 'approved',
+  })
+    .select('userId branchId')
+    .lean<Array<{ userId: string; branchId: string }>>()
+    .exec();
+  const branchMembershipsByUser = new Map<string, string[]>();
+  approvedBranchMemberships.forEach((entry) => {
+    const list = branchMembershipsByUser.get(entry.userId) ?? [];
+    list.push(entry.branchId);
+    branchMembershipsByUser.set(entry.userId, list);
+  });
+
+  for (const userId of pendingUserIds) {
+    await assignAlumniNumberForClassMembership(userId, classId);
+    await ensureCurrentYearDuesInvoices({ userId, scopeType: 'class', scopeId: classId });
+    const branchIds = branchMembershipsByUser.get(userId) ?? [];
+    for (const branchId of branchIds) {
+      await ensureCurrentYearDuesInvoices({ userId, scopeType: 'branch', scopeId: branchId });
+    }
+  }
+
+  return {
+    classId,
+    classLabel: classDoc.label,
+    classYear: classDoc.entryYear,
+    totalClassMembers: classUserIds.length,
+    pendingFound: pendingUserIds.length,
+    activated: pendingUserIds.length,
+  };
 }
 
 export async function changeAdminMemberClass(

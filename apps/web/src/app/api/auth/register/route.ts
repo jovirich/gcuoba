@@ -244,6 +244,8 @@ export const POST = (request: Request) =>
       passwordHash,
       phone,
       status: 'pending',
+      claimStatus: 'claimed',
+      claimedAt: new Date(),
     });
     const userId = userDoc._id.toString();
 

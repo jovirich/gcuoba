@@ -42,6 +42,11 @@ const statusPills: Record<MemberStatus, string> = {
     suspended: "border-rose-200 bg-rose-50 text-rose-700",
 };
 
+const claimStatusPills: Record<"claimed" | "unclaimed", string> = {
+    claimed: "border-slate-200 bg-slate-50 text-slate-700",
+    unclaimed: "border-rose-200 bg-rose-50 text-rose-700",
+};
+
 export function MemberManagementPanel({
     members: initialMembers,
     branches,
@@ -85,6 +90,9 @@ export function MemberManagementPanel({
     const classMap = useMemo(() => new Map(classes.map((classSet) => [classSet.id, classSet.label])), [classes]);
     const houseMap = useMemo(() => new Map(houses.map((house) => [house.id, house.name])), [houses]);
     const roleNameMap = useMemo(() => new Map(roles.map((role) => [role.code, role.name])), [roles]);
+    const resolveClaimStatus = useCallback((member: AdminMemberDTO) => {
+        return member.user.claimStatus === "unclaimed" ? "unclaimed" : "claimed";
+    }, []);
     const resolveBranchLabel = useCallback((branchId?: string | null) => {
         if (!branchId) {
             return "N/A";
@@ -180,6 +188,10 @@ export function MemberManagementPanel({
         }
         setScopeTarget(activeScopeId ?? "");
     }, [activeScopeId, activeScopeType]);
+
+    useEffect(() => {
+        setMembers(initialMembers);
+    }, [initialMembers]);
 
     useEffect(() => {
         if (isScopeLocked) {
@@ -600,9 +612,16 @@ export function MemberManagementPanel({
                                     <p className="text-sm font-semibold">{member.user.name}</p>
                                     <p className="text-xs text-slate-500">{member.user.email}</p>
                                 </div>
-                                <span className={`btn-pill ${statusPills[member.user.status]} border-transparent`}>
-                                    {capitalize(member.user.status)}
-                                </span>
+                                <div className="flex flex-col items-end gap-1">
+                                    <span className={`btn-pill ${statusPills[member.user.status]} border-transparent`}>
+                                        {capitalize(member.user.status)}
+                                    </span>
+                                    <span
+                                        className={`btn-pill ${claimStatusPills[resolveClaimStatus(member)]} border-transparent`}
+                                    >
+                                        {capitalize(resolveClaimStatus(member))}
+                                    </span>
+                                </div>
                             </div>
                             <p className="text-xs text-slate-500">
                                 Class: {classMap.get(member.classMembership?.classId ?? "") ?? "Unassigned"}
@@ -637,9 +656,16 @@ export function MemberManagementPanel({
                             <h2 className="text-2xl font-semibold text-slate-900">{selectedMember.user.name}</h2>
                             <p className="text-sm text-slate-500">{selectedMember.user.email}</p>
                         </div>
-                        <span className={`btn-pill ${statusPills[selectedMember.user.status]} border-transparent`}>
-                            {capitalize(selectedMember.user.status)}
-                        </span>
+                        <div className="flex flex-col items-end gap-2">
+                            <span className={`btn-pill ${statusPills[selectedMember.user.status]} border-transparent`}>
+                                Status: {capitalize(selectedMember.user.status)}
+                            </span>
+                            <span
+                                className={`btn-pill ${claimStatusPills[resolveClaimStatus(selectedMember)]} border-transparent`}
+                            >
+                                Claim: {capitalize(resolveClaimStatus(selectedMember))}
+                            </span>
+                        </div>
                     </div>
                     <div className="mt-4 grid gap-4 sm:grid-cols-2">
                         <div className="rounded-2xl border border-slate-100 p-4">
@@ -690,6 +716,10 @@ export function MemberManagementPanel({
                                 <p><span className="font-semibold">Email:</span> {selectedMember.user.email}</p>
                                 <p><span className="font-semibold">Phone:</span> {selectedMember.user.phone ?? "N/A"}</p>
                                 <p><span className="font-semibold">Status:</span> {capitalize(selectedMember.user.status)}</p>
+                                <p>
+                                    <span className="font-semibold">Claim status:</span>{" "}
+                                    {capitalize(resolveClaimStatus(selectedMember))}
+                                </p>
                             </div>
                             <div className="rounded-2xl border border-slate-100 p-3">
                                 <p><span className="font-semibold">Title:</span> {selectedMember.profile?.title ?? "N/A"}</p>

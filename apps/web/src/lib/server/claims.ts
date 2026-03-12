@@ -100,6 +100,13 @@ function isPlaceholderEmail(email: string) {
   return email.toLowerCase().endsWith('@placeholder.gcuoba.local');
 }
 
+function isClaimableUser(user: { status?: 'pending' | 'active' | 'suspended'; claimStatus?: 'unclaimed' | 'claimed' }) {
+  if (user.claimStatus === 'unclaimed') {
+    return true;
+  }
+  return user.status === 'pending' && user.claimStatus === undefined;
+}
+
 async function resolveClassByYear(classYear: number) {
   const classDoc = await ClassModel.findOne({ entryYear: classYear })
     .select('_id entryYear label')
@@ -128,12 +135,22 @@ export async function listClassClaimMembers(classYear: number, query?: string): 
   }
 
   const users = await UserModel.find({ _id: { $in: userIds } })
-    .select('name phone email')
-    .lean<Array<{ _id: { toString(): string }; name?: string; phone?: string | null; email: string }>>()
+    .select('name phone email status claimStatus')
+    .lean<
+      Array<{
+        _id: { toString(): string };
+        name?: string;
+        phone?: string | null;
+        email: string;
+        status?: 'pending' | 'active' | 'suspended';
+        claimStatus?: 'unclaimed' | 'claimed';
+      }>
+    >()
     .exec();
 
   const normalizedQuery = query?.trim().toLowerCase() || '';
   const rows = users
+    .filter((user) => isClaimableUser(user))
     .map((user) => ({
       userId: user._id.toString(),
       name: user.name?.trim() || 'Unnamed member',
@@ -167,9 +184,12 @@ export async function verifyClassClaim(
     throw new ApiError(404, 'Member not found in this class claim list', 'NotFound');
   }
 
-  const user = await UserModel.findById(userId).select('name phone email passwordHash').exec();
+  const user = await UserModel.findById(userId).select('name phone email passwordHash status claimStatus').exec();
   if (!user) {
     throw new ApiError(404, 'Member account not found', 'NotFound');
+  }
+  if (!isClaimableUser(user)) {
+    throw new ApiError(400, 'This account has already been claimed.', 'BadRequest');
   }
 
   const valid = await bcrypt.compare(password, normalizeLegacyBcrypt(user.passwordHash));
@@ -288,6 +308,8 @@ export async function completeClassClaimProfile(input: ClassClaimProfileInput): 
   user.phone = phone;
   user.passwordHash = passwordHash;
   user.status = 'active';
+  user.claimStatus = 'claimed';
+  user.claimedAt = new Date();
   if (priorEmail.toLowerCase() !== email.toLowerCase()) {
     user.emailVerifiedAt = null;
   }

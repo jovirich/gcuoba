@@ -8,19 +8,49 @@ import { RoleSwitcher } from '@/components/role-switcher';
 import { authOptions } from '@/lib/auth-options';
 import { fetchJson } from '@/lib/api';
 import { fetchUserAssignments } from '@/lib/role-assignments';
+import { connectMongo } from '@/lib/server/mongo';
+import { ClassMembershipModel, ClassModel } from '@/lib/server/models';
 
 type Props = {
   children: ReactNode;
 };
 
+async function resolveClaimRedirectPath(userId: string): Promise<string | null> {
+  await connectMongo();
+  const membership = await ClassMembershipModel.findOne({ userId }).select('classId').lean<{ classId?: string }>().exec();
+  if (!membership?.classId) {
+    return null;
+  }
+  const classDoc = await ClassModel.findById(membership.classId)
+    .select('entryYear')
+    .lean<{ entryYear?: number }>()
+    .exec();
+  if (!classDoc?.entryYear) {
+    return null;
+  }
+  return `/claim/class/${classDoc.entryYear}`;
+}
+
 export default async function AdminLayout({ children }: Props) {
   const session = await getServerSession(authOptions);
-  const user = session?.user as { id?: string; name?: string; token?: string; status?: string } | undefined;
+  const user = session?.user as {
+    id?: string;
+    name?: string;
+    token?: string;
+    status?: string;
+    claimStatus?: 'unclaimed' | 'claimed';
+  } | undefined;
   if (!user?.id || !user.token) {
     redirect('/login');
   }
   if (user.status !== 'active') {
     redirect('/profile?pending=1');
+  }
+  if (user.claimStatus === 'unclaimed') {
+    const claimRedirectPath = await resolveClaimRedirectPath(user.id);
+    if (claimRedirectPath) {
+      redirect(claimRedirectPath);
+    }
   }
 
   const [executiveAccess, assignments] = await Promise.all([
