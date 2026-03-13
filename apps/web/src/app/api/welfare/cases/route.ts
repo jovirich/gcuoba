@@ -25,8 +25,16 @@ type CreateWelfareCaseBody = {
   scopeId?: string;
   targetAmount?: number;
   currency?: string;
+  beneficiaryType?: 'member' | 'external';
   beneficiaryName?: string;
+  beneficiaryExternalDetails?: string;
   beneficiaryUserId?: string;
+  attendanceRequired?: boolean;
+  attendanceEventTitle?: string;
+  attendanceEventDescription?: string;
+  attendanceEventStartAt?: string;
+  attendanceEventEndAt?: string;
+  attendanceEventLocation?: string;
 };
 
 export const GET = (request: Request) =>

@@ -7,6 +7,7 @@ import { ClassModel } from '@/lib/server/models';
 import { getServerSession } from 'next-auth';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { WelfareAppealsPanel } from './welfare-appeals-panel';
 
 async function getDashboardSummary(userId: string): Promise<DashboardSummaryDTO | null> {
   try {
@@ -143,22 +144,7 @@ export default async function MemberDashboardPage() {
           <p className="text-sm text-slate-500">
             Current welfare requests available to members in your scope.
           </p>
-          <ul className="mt-3 space-y-2">
-            {summary.welfareCases.slice(0, 3).map((wcase) => (
-              <li key={wcase.id} className="rounded-xl border border-red-50 bg-red-50/40 p-3">
-                <p className="text-sm font-semibold text-slate-900">{wcase.title}</p>
-                <p className="text-xs text-slate-500 line-clamp-2">{wcase.description}</p>
-                <p className="text-xs text-slate-500">
-                  Target: {wcase.targetAmount.toLocaleString()} {wcase.currency}
-                </p>
-              </li>
-            ))}
-            {summary.welfareCases.length === 0 && (
-              <li className="rounded-xl border border-dashed border-slate-200 p-3 text-sm text-slate-500">
-                No active welfare appeals at the moment.
-              </li>
-            )}
-          </ul>
+          <WelfareAppealsPanel cases={summary.welfareCases} authToken={sessionUser.token} />
         </div>
       </section>
 

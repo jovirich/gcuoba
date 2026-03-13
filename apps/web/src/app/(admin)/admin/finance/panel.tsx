@@ -35,8 +35,10 @@ const FINANCE_SECTION_LABELS: Record<FinanceSection, string> = {
   dues: 'Dues',
   projects: 'Projects',
   expenses: 'Expenses',
-  payments: 'Payments',
+  payments: 'Post Payments',
 };
+
+type PaymentType = 'dues';
 
 type SchemeFormState = {
   title: string;
@@ -188,6 +190,8 @@ export function FinancePanel({
     ALL_FINANCE_SECTIONS.includes(initialSection) ? initialSection : 'reports',
   );
   const [paymentState, setPaymentState] = useState({
+    paymentType: 'dues' as PaymentType,
+    memberId: '',
     invoiceId: '',
     amount: '',
     channel: 'manual',
@@ -195,6 +199,7 @@ export function FinancePanel({
     notes: '',
     paidAt: nowLocalDateTimeValue(),
   });
+  const [paymentMemberInput, setPaymentMemberInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -209,6 +214,7 @@ export function FinancePanel({
   });
   const [schemeBusy, setSchemeBusy] = useState(false);
   const [schemeActionId, setSchemeActionId] = useState<string | null>(null);
+  const [duesViewTab, setDuesViewTab] = useState<'manage' | 'create'>('manage');
   const [scopeOptions, setScopeOptions] = useState<ScopeOptionsState>({ branches: [], classes: [] });
   const [scopeLoadError, setScopeLoadError] = useState<string | null>(null);
   const currentYear = new Date().getFullYear();
@@ -344,6 +350,160 @@ export function FinancePanel({
   const outstandingInvoices = useMemo(() => {
     return summary.invoices.filter((invoice) => (invoice.balance ?? 0) > 0);
   }, [summary.invoices]);
+
+  const invoiceMembers = useMemo(() => {
+    const grouped = new Map<
+      string,
+      {
+        userId: string;
+        memberLabel: string;
+        optionLabel: string;
+        invoiceCount: number;
+        outstandingInvoiceCount: number;
+        totalOutstanding: number;
+      }
+    >();
+    summary.invoices.forEach((invoice) => {
+      const balance = invoiceOutstandingBalance(invoice);
+      const existing = grouped.get(invoice.userId);
+      const name = invoice.userName?.trim();
+      const alumni = invoice.userAlumniNumber?.trim() || null;
+      const memberLabel = name || alumni || 'Member';
+      const optionLabel = alumni ? `${memberLabel} (${alumni})` : memberLabel;
+      if (existing) {
+        existing.invoiceCount += 1;
+        if (balance > 0) {
+          existing.outstandingInvoiceCount += 1;
+          existing.totalOutstanding = Number((existing.totalOutstanding + balance).toFixed(2));
+        }
+        return;
+      }
+      grouped.set(invoice.userId, {
+        userId: invoice.userId,
+        memberLabel,
+        optionLabel,
+        invoiceCount: 1,
+        outstandingInvoiceCount: balance > 0 ? 1 : 0,
+        totalOutstanding: Number(Math.max(balance, 0).toFixed(2)),
+      });
+    });
+    return Array.from(grouped.values()).sort((a, b) => a.memberLabel.localeCompare(b.memberLabel));
+  }, [summary.invoices]);
+
+  const selectedPaymentMember = useMemo(
+    () => invoiceMembers.find((entry) => entry.userId === paymentState.memberId) ?? null,
+    [invoiceMembers, paymentState.memberId],
+  );
+
+  const selectedMemberInvoices = useMemo(() => {
+    if (!paymentState.memberId) {
+      return [] as DuesInvoiceDTO[];
+    }
+    return outstandingInvoices
+      .filter((invoice) => invoice.userId === paymentState.memberId)
+      .sort((a, b) => {
+        const aTime = a.periodStart ? new Date(a.periodStart).getTime() : Number.MAX_SAFE_INTEGER;
+        const bTime = b.periodStart ? new Date(b.periodStart).getTime() : Number.MAX_SAFE_INTEGER;
+        if (aTime !== bTime) {
+          return aTime - bTime;
+        }
+        return a.id.localeCompare(b.id);
+      });
+  }, [outstandingInvoices, paymentState.memberId]);
+
+  const selectedMemberDuesBuckets = useMemo(() => {
+    const grouped = new Map<
+      string,
+      {
+        anchorInvoiceId: string;
+        schemeTitle: string;
+        currency: string;
+        invoiceCount: number;
+        totalOutstanding: number;
+      }
+    >();
+    selectedMemberInvoices.forEach((invoice) => {
+      const schemeId = invoice.scheme?.id ?? `no-scheme:${invoice.scheme?.title ?? 'dues'}`;
+      const balance = invoiceOutstandingBalance(invoice);
+      if (balance <= 0) {
+        return;
+      }
+      const existing = grouped.get(schemeId);
+      if (existing) {
+        existing.invoiceCount += 1;
+        existing.totalOutstanding = Number((existing.totalOutstanding + balance).toFixed(2));
+        return;
+      }
+      grouped.set(schemeId, {
+        anchorInvoiceId: invoice.id,
+        schemeTitle: invoice.scheme?.title ?? 'Dues',
+        currency: invoice.currency ?? 'NGN',
+        invoiceCount: 1,
+        totalOutstanding: Number(balance.toFixed(2)),
+      });
+    });
+    return Array.from(grouped.values()).sort((a, b) => a.schemeTitle.localeCompare(b.schemeTitle));
+  }, [selectedMemberInvoices]);
+
+  const selectedPaymentInvoice = useMemo(() => {
+    if (!paymentState.invoiceId) {
+      return null;
+    }
+    return selectedMemberInvoices.find((invoice) => invoice.id === paymentState.invoiceId) ?? null;
+  }, [paymentState.invoiceId, selectedMemberInvoices]);
+
+  const selectedSchemeInvoices = useMemo(() => {
+    if (!selectedPaymentInvoice) {
+      return [] as DuesInvoiceDTO[];
+    }
+    const schemeId = selectedPaymentInvoice.scheme?.id ?? null;
+    return selectedMemberInvoices.filter((invoice) => {
+      if (schemeId) {
+        return invoice.scheme?.id === schemeId;
+      }
+      return (invoice.scheme?.title ?? 'Dues') === (selectedPaymentInvoice.scheme?.title ?? 'Dues');
+    });
+  }, [selectedMemberInvoices, selectedPaymentInvoice]);
+
+  const paymentAllocationPreview = useMemo(() => {
+    const amount = Number(paymentState.amount);
+    if (!Number.isFinite(amount) || amount <= 0 || selectedSchemeInvoices.length === 0) {
+      return null;
+    }
+    const totalOutstanding = selectedSchemeInvoices.reduce(
+      (sum, invoice) => sum + invoiceOutstandingBalance(invoice),
+      0,
+    );
+    let remaining = Number(amount.toFixed(2));
+    let applied = 0;
+    let coveredInvoices = 0;
+    selectedSchemeInvoices.forEach((invoice) => {
+      if (remaining <= 0.01) {
+        return;
+      }
+      const balance = invoiceOutstandingBalance(invoice);
+      if (balance <= 0.01) {
+        return;
+      }
+      const nextApplied = Number(Math.min(remaining, balance).toFixed(2));
+      if (nextApplied <= 0) {
+        return;
+      }
+      applied = Number((applied + nextApplied).toFixed(2));
+      remaining = Number((remaining - nextApplied).toFixed(2));
+      coveredInvoices += 1;
+    });
+    const unapplied = Number(Math.max(amount - applied, 0).toFixed(2));
+    const remainingOutstanding = Number(Math.max(totalOutstanding - applied, 0).toFixed(2));
+    return {
+      totalOutstanding: Number(totalOutstanding.toFixed(2)),
+      applied,
+      uncoveredInvoices: Math.max(selectedSchemeInvoices.length - coveredInvoices, 0),
+      coveredInvoices,
+      unapplied,
+      remainingOutstanding,
+    };
+  }, [paymentState.amount, selectedSchemeInvoices]);
 
   const filteredSchemes = useMemo(() => {
     const query = schemeQuery.trim().toLowerCase();
@@ -711,12 +871,48 @@ export function FinancePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeScopeId, activeScopeType, authToken]);
 
+  function handleMemberChange(memberId: string, optionLabel?: string) {
+    setPaymentState((prev) => ({
+      ...prev,
+      memberId,
+      invoiceId: '',
+      amount: '',
+    }));
+    if (optionLabel !== undefined) {
+      setPaymentMemberInput(optionLabel);
+    }
+  }
+
+  function handleMemberInputChange(value: string) {
+    setPaymentMemberInput(value);
+    const normalizedValue = value.trim().toLowerCase();
+    const exactMatch = invoiceMembers.find(
+      (entry) => entry.optionLabel.trim().toLowerCase() === normalizedValue,
+    );
+    const matchedMembers = exactMatch
+      ? [exactMatch]
+      : normalizedValue
+        ? invoiceMembers.filter((entry) => entry.optionLabel.toLowerCase().includes(normalizedValue))
+        : [];
+    const matchedMember = matchedMembers.length === 1 ? matchedMembers[0] : exactMatch;
+    if (matchedMember) {
+      handleMemberChange(matchedMember.userId, matchedMember.optionLabel);
+      return;
+    }
+    setPaymentState((prev) => ({
+      ...prev,
+      memberId: '',
+      invoiceId: '',
+      amount: '',
+    }));
+  }
+
   function handleInvoiceChange(invoiceId: string) {
-    const invoice = summary.invoices.find((item) => item.id === invoiceId);
+    const duesBucket = selectedMemberDuesBuckets.find((item) => item.anchorInvoiceId === invoiceId);
     setPaymentState((prev) => ({
       ...prev,
       invoiceId,
-      amount: invoice ? (invoice.balance ?? invoice.amount).toString() : prev.amount,
+      amount: duesBucket ? String(Number(duesBucket.totalOutstanding.toFixed(2))) : prev.amount,
     }));
   }
 
@@ -790,6 +986,7 @@ export function FinancePanel({
       });
       setStatus('Scheme created.');
       resetSchemeForm();
+      setDuesViewTab('manage');
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create scheme.');
@@ -1194,9 +1391,21 @@ export function FinancePanel({
     setError(null);
     setStatus(null);
 
-    const invoice = summary.invoices.find((item) => item.id === paymentState.invoiceId);
+    if (paymentState.paymentType !== 'dues') {
+      setError('Only dues payments are currently supported.');
+      setSubmitting(false);
+      return;
+    }
+
+    if (!paymentState.memberId) {
+      setError('Select the member for this payment.');
+      setSubmitting(false);
+      return;
+    }
+
+    const invoice = selectedMemberInvoices.find((item) => item.id === paymentState.invoiceId);
     if (!invoice) {
-      setError('Please select an invoice to credit.');
+      setError('Please select the dues item to credit.');
       setSubmitting(false);
       return;
     }
@@ -1213,17 +1422,20 @@ export function FinancePanel({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          payerUserId: invoice.userId,
+          payerUserId: paymentState.memberId,
           amount: amountNumber,
           channel: paymentState.channel || 'manual',
           reference: paymentState.reference || undefined,
           notes: paymentState.notes || undefined,
           paidAt: paymentState.paidAt || undefined,
+          invoiceId: invoice.id,
           invoiceApplications: [{ invoiceId: invoice.id, amount: amountNumber }],
         }),
         token: authToken,
       });
       setPaymentState({
+        paymentType: 'dues',
+        memberId: '',
         invoiceId: '',
         amount: '',
         channel: 'manual',
@@ -1231,6 +1443,7 @@ export function FinancePanel({
         notes: '',
         paidAt: nowLocalDateTimeValue(),
       });
+      setPaymentMemberInput('');
       setStatus('Payment recorded successfully.');
       router.refresh();
     } catch (err) {
@@ -1243,14 +1456,18 @@ export function FinancePanel({
   return (
     <div className="space-y-6">
       {renderSectionTabs && (
-        <section className="surface-card p-3 shadow-sm">
+        <section className="rounded-xl border border-red-100 bg-red-50/70 p-2 shadow-sm">
           <div className="flex flex-wrap gap-2">
             {visibleSections.map((section) => (
               <button
                 key={section}
                 type="button"
                 onClick={() => setActiveSection(section)}
-                className={`btn-pill text-sm ${activeSection === section ? 'border-red-300 bg-red-100 text-red-800' : 'border-slate-200 hover:border-slate-300'}`}
+                className={`rounded-lg border px-3 py-2 text-sm font-semibold transition ${
+                  activeSection === section
+                    ? 'border-red-300 bg-red-600 text-white shadow-sm'
+                    : 'border-red-100 bg-white text-slate-700 hover:border-red-200 hover:bg-red-50'
+                }`}
               >
                 {FINANCE_SECTION_LABELS[section]}
               </button>
@@ -1750,7 +1967,34 @@ export function FinancePanel({
           <h2 className="text-lg font-semibold text-slate-900">Dues schemes</h2>
           <span className="text-sm text-slate-500">{summary.schemes.length} scheme(s)</span>
         </div>
+        <div className="mt-3 rounded-xl border border-red-100 bg-red-50/70 p-2">
+          <div className="grid gap-2 sm:grid-cols-2">
+          <button
+            type="button"
+            className={`rounded-lg border px-3 py-2 text-sm font-semibold transition ${
+              duesViewTab === 'manage'
+                ? 'border-red-300 bg-red-600 text-white shadow-sm'
+                : 'border-red-100 bg-white text-slate-700 hover:border-red-200 hover:bg-red-50'
+            }`}
+            onClick={() => setDuesViewTab('manage')}
+          >
+            Manage dues
+          </button>
+          <button
+            type="button"
+            className={`rounded-lg border px-3 py-2 text-sm font-semibold transition ${
+              duesViewTab === 'create'
+                ? 'border-red-300 bg-red-600 text-white shadow-sm'
+                : 'border-red-100 bg-white text-slate-700 hover:border-red-200 hover:bg-red-50'
+            }`}
+            onClick={() => setDuesViewTab('create')}
+          >
+            Create dues
+          </button>
+          </div>
+        </div>
 
+        {duesViewTab === 'create' && (
         <form onSubmit={createScheme} className="mt-4 grid gap-4 md:grid-cols-6">
           <label className="text-sm text-slate-600 md:col-span-2">
             Title
@@ -1875,6 +2119,7 @@ export function FinancePanel({
             {scopeLoadError && <p className="mt-2 text-xs text-rose-600">{scopeLoadError}</p>}
           </div>
         </form>
+        )}
 
         {editingProjectId && (
           <form onSubmit={saveProjectEdit} className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
@@ -2666,31 +2911,102 @@ export function FinancePanel({
       {activeSection === 'payments' && (
         <>
       <section className="surface-card p-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-900">Record a payment</h2>
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <h2 className="text-lg font-semibold text-slate-900">Post a payment</h2>
+          <label className="text-sm text-slate-600 md:min-w-[420px]">
+            Select a member
+            <input
+              className="field-input"
+              placeholder="Type name, alumni number, or member ID"
+              list="finance-payment-member-options"
+              value={paymentMemberInput}
+              onChange={(event) => handleMemberInputChange(event.target.value)}
+            />
+            <datalist id="finance-payment-member-options">
+              {invoiceMembers.map((member) => (
+                <option key={member.userId} value={member.optionLabel} />
+              ))}
+            </datalist>
+          </label>
+        </div>
         {outstandingInvoices.length === 0 ? (
           <p className="mt-3 text-sm text-slate-500">
             All invoices are settled. New payments will appear here once members incur balances.
           </p>
         ) : (
           <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+            <div className="grid gap-4 md:grid-cols-1">
+              <label className="text-sm text-slate-600">
+                Payment type
+                <select
+                  className="field-input"
+                  value={paymentState.paymentType}
+                  onChange={(event) =>
+                    setPaymentState((prev) => ({
+                      ...prev,
+                      paymentType: event.target.value as PaymentType,
+                    }))
+                  }
+                >
+                  <option value="dues">Dues</option>
+                </select>
+              </label>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+              {selectedPaymentMember ? (
+                <span>
+                  Selected member: <span className="font-semibold text-slate-900">{selectedPaymentMember.memberLabel}</span> |{' '}
+                  Total invoices: {selectedPaymentMember.invoiceCount} | Outstanding invoices:{' '}
+                  {selectedPaymentMember.outstandingInvoiceCount} | Outstanding amount:{' '}
+                  {selectedPaymentMember.totalOutstanding.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </span>
+              ) : (
+                <span>Select a member above to load dues invoice groups.</span>
+              )}
+            </div>
+
             <label className="text-sm text-slate-600">
-              Invoice
+              Dues invoice group
               <select
                 className="field-input"
                 value={paymentState.invoiceId}
                 onChange={(event) => handleInvoiceChange(event.target.value)}
+                disabled={!paymentState.memberId}
                 required
               >
-                <option value="">Select an invoice</option>
-                {outstandingInvoices.map((invoice) => (
-                  <option key={invoice.id} value={invoice.id}>
-                    {formatMemberIdentity(invoice.userName, invoice.userAlumniNumber)} - {invoice.scheme?.title ?? 'Dues'} (
-                    {invoice.balance?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? invoice.amount}
-                    )
+                <option value="">{paymentState.memberId ? 'Select dues invoice group' : 'Select member first'}</option>
+                {selectedMemberDuesBuckets.map((bucket) => (
+                  <option key={bucket.anchorInvoiceId} value={bucket.anchorInvoiceId}>
+                    {bucket.schemeTitle} - {bucket.invoiceCount} invoice(s), outstanding{' '}
+                    {bucket.totalOutstanding.toLocaleString(undefined, { maximumFractionDigits: 2 })} {bucket.currency}
                   </option>
                 ))}
               </select>
             </label>
+            {paymentState.memberId && selectedMemberDuesBuckets.length === 0 && (
+              <p className="text-xs text-slate-500">The selected member has no outstanding dues invoices.</p>
+            )}
+            {paymentAllocationPreview && (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                <p className="font-semibold">Allocation preview</p>
+                <p>
+                  Current outstanding: {paymentAllocationPreview.totalOutstanding.toLocaleString(undefined, { maximumFractionDigits: 2 })}{' '}
+                  | This posting applies: {paymentAllocationPreview.applied.toLocaleString(undefined, { maximumFractionDigits: 2 })} across{' '}
+                  {paymentAllocationPreview.coveredInvoices} invoice(s).
+                </p>
+                <p>
+                  Remaining outstanding after posting:{' '}
+                  {paymentAllocationPreview.remainingOutstanding.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  {paymentAllocationPreview.unapplied > 0
+                    ? ` | Unapplied credit: ${paymentAllocationPreview.unapplied.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                    : ''}
+                </p>
+              </div>
+            )}
+            <p className="text-xs text-slate-500">
+              Dues payments auto-allocate from the oldest outstanding invoices in the selected dues group. Partial postings
+              keep the remaining balance outstanding.
+            </p>
 
             <div className="grid gap-4 md:grid-cols-3">
               <label className="text-sm text-slate-600">
@@ -2763,6 +3079,16 @@ export function FinancePanel({
       )}
     </div>
   );
+}
+
+function invoiceOutstandingBalance(invoice: DuesInvoiceDTO) {
+  const paidAmount = Number(invoice.paidAmount ?? 0);
+  const amount = Number(invoice.amount ?? 0);
+  const directBalance = Number(invoice.balance ?? NaN);
+  if (Number.isFinite(directBalance)) {
+    return Number(Math.max(directBalance, 0).toFixed(2));
+  }
+  return Number(Math.max(amount - paidAmount, 0).toFixed(2));
 }
 
 function formatMemberIdentity(name?: string, alumniNumber?: string | null, fallbackId?: string) {

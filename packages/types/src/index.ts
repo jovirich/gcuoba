@@ -308,8 +308,15 @@ export interface WelfareCaseDTO {
   status: 'open' | 'closed';
   totalRaised?: number;
   totalDisbursed?: number;
+  beneficiaryType?: 'member' | 'external';
   beneficiaryName?: string;
   beneficiaryUserId?: string;
+  beneficiaryExternalDetails?: string | null;
+  attendanceRequired?: boolean;
+  attendanceEventId?: string | null;
+  attendanceEventTitle?: string | null;
+  attendanceEventStartAt?: string | null;
+  attendanceEventLocation?: string | null;
 }
 
 export interface WelfareContributionDTO {
@@ -321,6 +328,8 @@ export interface WelfareContributionDTO {
   amount: number;
   currency: string;
   notes?: string;
+  paymentEvidenceUrl?: string;
+  paymentEvidenceName?: string;
   paidAt?: string;
   status: 'pending' | 'approved' | 'rejected';
   reviewedBy?: string | null;

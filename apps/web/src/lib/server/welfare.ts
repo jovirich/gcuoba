@@ -18,6 +18,7 @@ import {
   ClassMembershipModel,
   ClassModel,
   DuesInvoiceModel,
+  EventModel,
   PaymentModel,
   UserModel,
   WelfareCaseModel,
@@ -33,6 +34,7 @@ import {
 import { createNotificationForUser } from './notifications';
 
 type WelfareScopeType = 'global' | 'branch' | 'class';
+type WelfareBeneficiaryType = 'member' | 'external';
 type WelfareQueueStatus = 'pending' | 'approved' | 'rejected';
 type WelfarePayoutDeductionType = 'standard_percentage' | 'dues_invoice' | 'liability' | 'custom';
 type NormalizedPayoutDeduction = {
@@ -89,8 +91,15 @@ function toCase(doc: WelfareCaseDoc): WelfareCaseDTO {
     status: doc.status ?? 'open',
     totalRaised: doc.totalRaised ?? 0,
     totalDisbursed: doc.totalDisbursed ?? 0,
+    beneficiaryType: (doc.beneficiaryType as WelfareBeneficiaryType) ?? 'member',
     beneficiaryName: doc.beneficiaryName ?? undefined,
     beneficiaryUserId: doc.beneficiaryUserId ?? undefined,
+    beneficiaryExternalDetails: doc.beneficiaryExternalDetails ?? null,
+    attendanceRequired: Boolean(doc.attendanceRequired),
+    attendanceEventId: doc.attendanceEventId ?? null,
+    attendanceEventTitle: doc.attendanceEventTitle ?? null,
+    attendanceEventStartAt: doc.attendanceEventStartAt?.toISOString() ?? null,
+    attendanceEventLocation: doc.attendanceEventLocation ?? null,
   };
 }
 
@@ -104,6 +113,8 @@ function toContribution(doc: WelfareContributionDoc): WelfareContributionDTO {
     amount: doc.amount,
     currency: doc.currency ?? 'NGN',
     notes: doc.notes ?? undefined,
+    paymentEvidenceUrl: doc.paymentEvidenceUrl ?? undefined,
+    paymentEvidenceName: doc.paymentEvidenceName ?? undefined,
     paidAt: doc.paidAt?.toISOString(),
     status: doc.status ?? 'pending',
     reviewedBy: doc.reviewedBy ?? null,
@@ -269,6 +280,18 @@ async function ensureCanViewCase(actorId: string, welfareCase: WelfareCaseDoc) {
 
 async function ensureCaseManagement(actorId: string, welfareCase: WelfareCaseDoc) {
   await ensureScopeManagement(actorId, welfareCase.scopeType, welfareCase.scopeId ?? null);
+}
+
+async function canManageCase(actorId: string, welfareCase: WelfareCaseDoc) {
+  try {
+    await ensureCaseManagement(actorId, welfareCase);
+    return true;
+  } catch (error) {
+    if (error instanceof ApiError && error.statusCode === 403) {
+      return false;
+    }
+    throw error;
+  }
 }
 
 async function ensureBeneficiaryInScope(
@@ -585,6 +608,9 @@ async function applyPayoutDuesDeductions(
 async function listBeneficiaryOutstandingInvoices(
   welfareCase: WelfareCaseDoc,
 ): Promise<WelfareOutstandingInvoiceDTO[]> {
+  if ((welfareCase.beneficiaryType as WelfareBeneficiaryType) === 'external') {
+    return [];
+  }
   const beneficiaryUserId = welfareCase.beneficiaryUserId;
   if (!beneficiaryUserId) {
     return [];
@@ -759,8 +785,16 @@ export async function createWelfareCase(
     scopeId?: string;
     targetAmount?: number;
     currency?: string;
+    beneficiaryType?: WelfareBeneficiaryType;
     beneficiaryName?: string;
+    beneficiaryExternalDetails?: string;
     beneficiaryUserId?: string;
+    attendanceRequired?: boolean;
+    attendanceEventTitle?: string;
+    attendanceEventDescription?: string;
+    attendanceEventStartAt?: string;
+    attendanceEventEndAt?: string;
+    attendanceEventLocation?: string;
   },
 ): Promise<WelfareCaseDTO> {
   const title = payload.title?.trim();
@@ -794,22 +828,73 @@ export async function createWelfareCase(
     throw new ApiError(400, 'Category does not match selected case scope', 'BadRequest');
   }
 
-  const beneficiaryUserId = payload.beneficiaryUserId?.trim() || null;
-  if (!beneficiaryUserId) {
-    throw new ApiError(400, 'Beneficiary member is required', 'BadRequest');
+  const beneficiaryType: WelfareBeneficiaryType =
+    payload.beneficiaryType === 'external' ? 'external' : 'member';
+  let beneficiaryUserId: string | null = null;
+  let beneficiaryName = '';
+  const beneficiaryExternalDetails = payload.beneficiaryExternalDetails?.trim() || null;
+
+  if (beneficiaryType === 'member') {
+    beneficiaryUserId = payload.beneficiaryUserId?.trim() || null;
+    if (!beneficiaryUserId) {
+      throw new ApiError(400, 'Beneficiary member is required', 'BadRequest');
+    }
+
+    const beneficiaryUser = await UserModel.findById(beneficiaryUserId)
+      .select('name status')
+      .lean<{ name?: string; status?: string }>()
+      .exec();
+    if (!beneficiaryUser?.name) {
+      throw new ApiError(400, 'Beneficiary member not found', 'BadRequest');
+    }
+    if (beneficiaryUser.status !== 'active') {
+      throw new ApiError(400, 'Beneficiary member must be active', 'BadRequest');
+    }
+    await ensureBeneficiaryInScope(beneficiaryUserId, scopeType, scopeId);
+    beneficiaryName = beneficiaryUser.name;
+  } else {
+    beneficiaryName = payload.beneficiaryName?.trim() || '';
+    if (!beneficiaryName) {
+      throw new ApiError(400, 'External beneficiary name is required', 'BadRequest');
+    }
   }
 
-  const beneficiaryUser = await UserModel.findById(beneficiaryUserId)
-    .select('name status')
-    .lean<{ name?: string; status?: string }>()
-    .exec();
-  if (!beneficiaryUser?.name) {
-    throw new ApiError(400, 'Beneficiary member not found', 'BadRequest');
+  const attendanceRequired = Boolean(payload.attendanceRequired);
+  let attendanceEventId: string | null = null;
+  let attendanceEventTitle: string | null = null;
+  let attendanceEventStartAt: Date | null = null;
+  let attendanceEventLocation: string | null = null;
+
+  if (attendanceRequired) {
+    const eventStartAt = parseOptionalDateTimeInput(payload.attendanceEventStartAt, 'attendanceEventStartAt');
+    if (!eventStartAt) {
+      throw new ApiError(400, 'attendanceEventStartAt is required when attendance is enabled', 'BadRequest');
+    }
+    const eventEndAt = parseOptionalDateTimeInput(payload.attendanceEventEndAt, 'attendanceEventEndAt');
+    if (eventEndAt && eventEndAt.getTime() < eventStartAt.getTime()) {
+      throw new ApiError(400, 'attendanceEventEndAt must be after attendanceEventStartAt', 'BadRequest');
+    }
+    const eventTitle = payload.attendanceEventTitle?.trim() || title;
+    const eventDescription =
+      payload.attendanceEventDescription?.trim() ||
+      `Attendance event linked to welfare case "${title}".`;
+    const eventLocation = payload.attendanceEventLocation?.trim() || null;
+
+    const createdEvent = await EventModel.create({
+      title: eventTitle,
+      description: eventDescription,
+      scopeType,
+      scopeId: scopeType === 'global' ? null : scopeId,
+      location: eventLocation,
+      startAt: eventStartAt,
+      endAt: eventEndAt,
+      status: 'published',
+    });
+    attendanceEventId = createdEvent._id.toString();
+    attendanceEventTitle = createdEvent.title;
+    attendanceEventStartAt = createdEvent.startAt;
+    attendanceEventLocation = createdEvent.location ?? null;
   }
-  if (beneficiaryUser.status !== 'active') {
-    throw new ApiError(400, 'Beneficiary member must be active', 'BadRequest');
-  }
-  await ensureBeneficiaryInScope(beneficiaryUserId, scopeType, scopeId);
 
   const record = await WelfareCaseModel.create({
     title,
@@ -819,11 +904,18 @@ export async function createWelfareCase(
     scopeId: scopeType === 'global' ? null : scopeId,
     targetAmount: payload.targetAmount ?? 0,
     currency: payload.currency?.trim().toUpperCase() || 'NGN',
-    beneficiaryName: beneficiaryUser.name,
+    beneficiaryType,
+    beneficiaryName,
     beneficiaryUserId,
+    beneficiaryExternalDetails,
     status: 'open',
     totalRaised: 0,
     totalDisbursed: 0,
+    attendanceRequired,
+    attendanceEventId,
+    attendanceEventTitle,
+    attendanceEventStartAt,
+    attendanceEventLocation,
   });
 
   await recordAuditLog({
@@ -837,16 +929,23 @@ export async function createWelfareCase(
       title: record.title,
       categoryId: record.categoryId,
       targetAmount: record.targetAmount ?? 0,
+      beneficiaryType: record.beneficiaryType ?? 'member',
+      beneficiaryName: record.beneficiaryName ?? null,
       beneficiaryUserId: record.beneficiaryUserId ?? null,
+      attendanceRequired: record.attendanceRequired ?? false,
+      attendanceEventId: record.attendanceEventId ?? null,
     },
   });
 
   if (record.beneficiaryUserId) {
     await createNotificationForUser(record.beneficiaryUserId, {
       title: 'Welfare case created',
-      message: `A welfare case "${record.title}" was opened with your profile as beneficiary.`,
+      message: `A welfare case "${record.title}" was opened with your profile as beneficiary.${record.attendanceRequired ? ' Attendance is required.' : ''}`,
       type: 'info',
-      metadata: { caseId: record._id.toString() },
+      metadata: {
+        caseId: record._id.toString(),
+        attendanceEventId: record.attendanceEventId ?? null,
+      },
     });
   }
 
@@ -885,6 +984,262 @@ export async function updateWelfareCaseStatus(
   return toCase(welfareCase);
 }
 
+export async function updateWelfareCase(
+  actorId: string,
+  caseId: string,
+  payload: {
+    title?: string;
+    description?: string;
+    categoryId?: string;
+    targetAmount?: number;
+    currency?: string;
+    beneficiaryType?: WelfareBeneficiaryType;
+    beneficiaryName?: string;
+    beneficiaryExternalDetails?: string;
+    beneficiaryUserId?: string;
+    attendanceRequired?: boolean;
+    attendanceEventTitle?: string;
+    attendanceEventDescription?: string;
+    attendanceEventStartAt?: string;
+    attendanceEventEndAt?: string;
+    attendanceEventLocation?: string;
+  },
+): Promise<WelfareCaseDTO> {
+  if (!Types.ObjectId.isValid(caseId)) {
+    throw new ApiError(404, 'Case not found', 'NotFound');
+  }
+
+  const welfareCase = await WelfareCaseModel.findById(caseId).exec();
+  if (!welfareCase) {
+    throw new ApiError(404, 'Case not found', 'NotFound');
+  }
+  await ensureCaseManagement(actorId, welfareCase);
+
+  const [contributionCount, payoutCount] = await Promise.all([
+    WelfareContributionModel.countDocuments({ caseId }),
+    WelfarePayoutModel.countDocuments({ caseId }),
+  ]);
+  const hasFinancialRows = contributionCount > 0 || payoutCount > 0;
+
+  const nextTitle = payload.title?.trim();
+  if (nextTitle) {
+    welfareCase.title = nextTitle;
+  }
+  const nextDescription = payload.description?.trim();
+  if (nextDescription) {
+    welfareCase.description = nextDescription;
+  }
+
+  const nextCategoryId = payload.categoryId?.trim();
+  if (nextCategoryId && nextCategoryId !== welfareCase.categoryId) {
+    if (!Types.ObjectId.isValid(nextCategoryId)) {
+      throw new ApiError(400, 'Invalid welfare category', 'BadRequest');
+    }
+    const category = await WelfareCategoryModel.findById(nextCategoryId).exec();
+    if (!category || category.status !== 'active') {
+      throw new ApiError(400, 'Invalid welfare category', 'BadRequest');
+    }
+    const scopeMatches =
+      category.scope_type === 'global' ||
+      (category.scope_type === welfareCase.scopeType &&
+        (category.scope_id ?? null) === (welfareCase.scopeId ?? null));
+    if (!scopeMatches) {
+      throw new ApiError(400, 'Category does not match selected case scope', 'BadRequest');
+    }
+    welfareCase.categoryId = nextCategoryId;
+  }
+
+  if (typeof payload.targetAmount === 'number' && Number.isFinite(payload.targetAmount)) {
+    if (payload.targetAmount < 0) {
+      throw new ApiError(400, 'targetAmount must be 0 or greater', 'BadRequest');
+    }
+    welfareCase.targetAmount = Number(payload.targetAmount.toFixed(2));
+  }
+
+  const nextCurrency = payload.currency?.trim().toUpperCase();
+  if (nextCurrency && nextCurrency !== (welfareCase.currency ?? 'NGN')) {
+    if (hasFinancialRows) {
+      throw new ApiError(400, 'Cannot change currency after contributions or payouts exist', 'BadRequest');
+    }
+    welfareCase.currency = nextCurrency;
+  }
+
+  const requestedBeneficiaryType: WelfareBeneficiaryType =
+    payload.beneficiaryType === 'external'
+      ? 'external'
+      : payload.beneficiaryType === 'member'
+        ? 'member'
+        : ((welfareCase.beneficiaryType as WelfareBeneficiaryType) ?? 'member');
+  const previousBeneficiaryType =
+    (welfareCase.beneficiaryType as WelfareBeneficiaryType) ?? 'member';
+  if (requestedBeneficiaryType !== previousBeneficiaryType && hasFinancialRows) {
+    throw new ApiError(400, 'Cannot change beneficiary type after contributions or payouts exist', 'BadRequest');
+  }
+
+  const nextBeneficiaryUserId = payload.beneficiaryUserId?.trim();
+  if (requestedBeneficiaryType === 'member') {
+    const resolvedBeneficiaryUserId =
+      nextBeneficiaryUserId ||
+      (previousBeneficiaryType === 'member' ? welfareCase.beneficiaryUserId ?? null : null);
+    if (!resolvedBeneficiaryUserId) {
+      throw new ApiError(400, 'Beneficiary member is required', 'BadRequest');
+    }
+    if (
+      hasFinancialRows &&
+      resolvedBeneficiaryUserId !== (welfareCase.beneficiaryUserId ?? null)
+    ) {
+      throw new ApiError(400, 'Cannot change beneficiary after contributions or payouts exist', 'BadRequest');
+    }
+    if (
+      previousBeneficiaryType !== 'member' ||
+      resolvedBeneficiaryUserId !== (welfareCase.beneficiaryUserId ?? null)
+    ) {
+      const beneficiaryUser = await UserModel.findById(resolvedBeneficiaryUserId)
+        .select('name status')
+        .lean<{ name?: string; status?: string }>()
+        .exec();
+      if (!beneficiaryUser?.name) {
+        throw new ApiError(400, 'Beneficiary member not found', 'BadRequest');
+      }
+      if (beneficiaryUser.status !== 'active') {
+        throw new ApiError(400, 'Beneficiary member must be active', 'BadRequest');
+      }
+      await ensureBeneficiaryInScope(
+        resolvedBeneficiaryUserId,
+        welfareCase.scopeType,
+        welfareCase.scopeId ?? null,
+      );
+      welfareCase.beneficiaryName = beneficiaryUser.name;
+    }
+    welfareCase.beneficiaryType = 'member';
+    welfareCase.beneficiaryUserId = resolvedBeneficiaryUserId;
+    welfareCase.beneficiaryExternalDetails = null;
+  } else {
+    const nextExternalName = payload.beneficiaryName?.trim();
+    const resolvedExternalName =
+      nextExternalName ||
+      (previousBeneficiaryType === 'external' ? welfareCase.beneficiaryName?.trim() || '' : '');
+    if (!resolvedExternalName) {
+      throw new ApiError(400, 'External beneficiary name is required', 'BadRequest');
+    }
+    if (
+      hasFinancialRows &&
+      resolvedExternalName !== (welfareCase.beneficiaryName ?? '')
+    ) {
+      throw new ApiError(400, 'Cannot change beneficiary after contributions or payouts exist', 'BadRequest');
+    }
+    welfareCase.beneficiaryType = 'external';
+    welfareCase.beneficiaryName = resolvedExternalName;
+    welfareCase.beneficiaryUserId = null;
+    if (typeof payload.beneficiaryExternalDetails === 'string') {
+      welfareCase.beneficiaryExternalDetails = payload.beneficiaryExternalDetails.trim() || null;
+    } else if (previousBeneficiaryType !== 'external') {
+      welfareCase.beneficiaryExternalDetails = null;
+    }
+  }
+
+  const shouldRequireAttendance =
+    typeof payload.attendanceRequired === 'boolean'
+      ? payload.attendanceRequired
+      : Boolean(welfareCase.attendanceRequired);
+  if (!shouldRequireAttendance) {
+    if (welfareCase.attendanceEventId) {
+      await EventModel.findByIdAndUpdate(welfareCase.attendanceEventId, { status: 'cancelled' }).exec();
+    }
+    welfareCase.attendanceRequired = false;
+    welfareCase.attendanceEventId = null;
+    welfareCase.attendanceEventTitle = null;
+    welfareCase.attendanceEventStartAt = null;
+    welfareCase.attendanceEventLocation = null;
+  } else {
+    const fallbackTitle = nextTitle || welfareCase.title;
+    const eventTitle = payload.attendanceEventTitle?.trim() || fallbackTitle;
+    const incomingStart = parseOptionalDateTimeInput(payload.attendanceEventStartAt, 'attendanceEventStartAt');
+    const eventStartAt = incomingStart ?? welfareCase.attendanceEventStartAt ?? null;
+    if (!eventStartAt) {
+      throw new ApiError(400, 'attendanceEventStartAt is required when attendance is enabled', 'BadRequest');
+    }
+    const eventEndAt = parseOptionalDateTimeInput(payload.attendanceEventEndAt, 'attendanceEventEndAt');
+    if (eventEndAt && eventEndAt.getTime() < eventStartAt.getTime()) {
+      throw new ApiError(400, 'attendanceEventEndAt must be after attendanceEventStartAt', 'BadRequest');
+    }
+    const eventDescription =
+      payload.attendanceEventDescription?.trim() ||
+      `Attendance event linked to welfare case "${welfareCase.title}".`;
+    const eventLocation = payload.attendanceEventLocation?.trim() || null;
+
+    let eventId = welfareCase.attendanceEventId ?? null;
+    let eventTitleSaved = eventTitle;
+    let eventStartSaved = eventStartAt;
+    let eventLocationSaved = eventLocation;
+    if (eventId) {
+      const updatedEvent = await EventModel.findByIdAndUpdate(
+        eventId,
+        {
+          title: eventTitle,
+          description: eventDescription,
+          scopeType: welfareCase.scopeType,
+          scopeId: welfareCase.scopeType === 'global' ? null : welfareCase.scopeId ?? null,
+          location: eventLocation,
+          startAt: eventStartAt,
+          endAt: eventEndAt ?? null,
+          status: 'published',
+        },
+        { new: true },
+      ).exec();
+      if (updatedEvent) {
+        eventId = updatedEvent._id.toString();
+        eventTitleSaved = updatedEvent.title;
+        eventStartSaved = updatedEvent.startAt;
+        eventLocationSaved = updatedEvent.location ?? null;
+      }
+    } else {
+      const createdEvent = await EventModel.create({
+        title: eventTitle,
+        description: eventDescription,
+        scopeType: welfareCase.scopeType,
+        scopeId: welfareCase.scopeType === 'global' ? null : welfareCase.scopeId ?? null,
+        location: eventLocation,
+        startAt: eventStartAt,
+        endAt: eventEndAt ?? null,
+        status: 'published',
+      });
+      eventId = createdEvent._id.toString();
+      eventTitleSaved = createdEvent.title;
+      eventStartSaved = createdEvent.startAt;
+      eventLocationSaved = createdEvent.location ?? null;
+    }
+
+    welfareCase.attendanceRequired = true;
+    welfareCase.attendanceEventId = eventId;
+    welfareCase.attendanceEventTitle = eventTitleSaved;
+    welfareCase.attendanceEventStartAt = eventStartSaved;
+    welfareCase.attendanceEventLocation = eventLocationSaved;
+  }
+
+  await welfareCase.save();
+
+  await recordAuditLog({
+    actorUserId: actorId,
+    action: 'welfare_case.updated',
+    resourceType: 'welfare_case',
+    resourceId: welfareCase._id.toString(),
+    scopeType: welfareCase.scopeType,
+    scopeId: welfareCase.scopeId ?? null,
+    metadata: {
+      categoryId: welfareCase.categoryId,
+      targetAmount: welfareCase.targetAmount ?? 0,
+      beneficiaryType: welfareCase.beneficiaryType ?? 'member',
+      beneficiaryName: welfareCase.beneficiaryName ?? null,
+      beneficiaryUserId: welfareCase.beneficiaryUserId ?? null,
+      attendanceRequired: welfareCase.attendanceRequired ?? false,
+      attendanceEventId: welfareCase.attendanceEventId ?? null,
+    },
+  });
+
+  return toCase(welfareCase);
+}
+
 export async function getWelfareCaseDetail(actorId: string, caseId: string): Promise<WelfareCaseDetailDTO> {
   if (!Types.ObjectId.isValid(caseId)) {
     throw new ApiError(404, 'Case not found', 'NotFound');
@@ -919,6 +1274,8 @@ export async function recordWelfareContribution(
     amount?: number;
     currency?: string;
     notes?: string;
+    paymentEvidenceUrl?: string;
+    paymentEvidenceName?: string;
     paidAt?: string;
   },
 ): Promise<WelfareContributionDTO> {
@@ -933,8 +1290,17 @@ export async function recordWelfareContribution(
     throw new ApiError(400, 'Case is closed', 'BadRequest');
   }
   await ensureCanViewCase(actorId, welfareCase);
+  const hasCaseManagementAccess = await canManageCase(actorId, welfareCase);
 
-  const contributorName = payload.contributorName?.trim();
+  let contributorUserId = payload.contributorUserId?.trim() || actorId;
+  let contributorName = payload.contributorName?.trim() || '';
+  let contributorEmail = payload.contributorEmail?.trim() || null;
+  if (!hasCaseManagementAccess) {
+    const actor = await UserModel.findById(actorId).select('name email').lean<{ name?: string; email?: string }>().exec();
+    contributorUserId = actorId;
+    contributorName = actor?.name?.trim() || contributorName || actor?.email?.trim() || 'Member contribution';
+    contributorEmail = actor?.email?.trim() || contributorEmail;
+  }
   if (!contributorName) {
     throw new ApiError(400, 'contributorName is required', 'BadRequest');
   }
@@ -943,21 +1309,30 @@ export async function recordWelfareContribution(
     throw new ApiError(400, 'amount must be greater than 0', 'BadRequest');
   }
   const paidAt = parseOptionalDateTimeInput(payload.paidAt, 'paidAt');
+  const paymentEvidenceUrl = payload.paymentEvidenceUrl?.trim() || null;
+  const paymentEvidenceName = payload.paymentEvidenceName?.trim() || null;
+  const status: 'pending' | 'approved' = hasCaseManagementAccess ? 'approved' : 'pending';
+  const reviewedAt = hasCaseManagementAccess ? new Date() : null;
 
   const contribution = await WelfareContributionModel.create({
     caseId,
-    userId: payload.contributorUserId?.trim() || actorId,
+    userId: contributorUserId,
     contributorName,
-    contributorEmail: payload.contributorEmail?.trim() || null,
+    contributorEmail,
     amount,
     currency: payload.currency?.trim().toUpperCase() || welfareCase.currency || 'NGN',
     notes: payload.notes?.trim() || null,
+    paymentEvidenceUrl,
+    paymentEvidenceName,
     paidAt: paidAt ?? new Date(),
-    status: 'pending',
-    reviewedBy: null,
-    reviewedAt: null,
-    reviewNote: null,
+    status,
+    reviewedBy: hasCaseManagementAccess ? actorId : null,
+    reviewedAt,
+    reviewNote: hasCaseManagementAccess ? 'Recorded by executive' : null,
   });
+  if (status === 'approved') {
+    await refreshCaseTotals(welfareCase._id.toString());
+  }
 
   await recordAuditLog({
     actorUserId: actorId,
@@ -971,6 +1346,8 @@ export async function recordWelfareContribution(
       amount: contribution.amount,
       currency: contribution.currency ?? 'NGN',
       contributorUserId: contribution.userId ?? null,
+      autoApproved: status === 'approved',
+      hasPaymentEvidence: Boolean(paymentEvidenceUrl),
     },
   });
 

@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import type {
   BranchDTO,
@@ -57,6 +57,16 @@ type PayoutDeductionFormState = {
   invoiceId: string;
 };
 
+type DuesDeductionGroup = {
+  key: string;
+  label: string;
+  currency: string;
+  amount: number;
+  outstanding: number;
+  invoiceIds: string[];
+  count: number;
+};
+
 type CreateCaseFormState = {
   title: string;
   description: string;
@@ -65,16 +75,72 @@ type CreateCaseFormState = {
   scopeId: string;
   targetAmount: string;
   currency: string;
+  beneficiaryType: 'member' | 'external';
   beneficiaryUserId: string;
+  beneficiaryQuery: string;
+  externalBeneficiaryName: string;
+  externalBeneficiaryDetails: string;
+  attendanceRequired: boolean;
+  attendanceEventTitle: string;
+  attendanceEventDescription: string;
+  attendanceEventStartAt: string;
+  attendanceEventEndAt: string;
+  attendanceEventLocation: string;
+};
+
+type EditCaseFormState = {
+  title: string;
+  description: string;
+  categoryId: string;
+  targetAmount: string;
+  currency: string;
+  beneficiaryType: 'member' | 'external';
+  beneficiaryUserId: string;
+  beneficiaryQuery: string;
+  externalBeneficiaryName: string;
+  externalBeneficiaryDetails: string;
+  attendanceRequired: boolean;
+  attendanceEventTitle: string;
+  attendanceEventDescription: string;
+  attendanceEventStartAt: string;
+  attendanceEventEndAt: string;
+  attendanceEventLocation: string;
 };
 
 type CaseStatus = 'open' | 'closed';
 type WelfareTab = 'create' | 'manage';
+type WelfareCaseTimelineTab = 'current' | 'past';
+type WelfareCaseDetailTab = 'contributors' | 'post' | 'payout';
 
 function nowLocalDateTimeValue() {
   const now = new Date();
   const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
   return local.toISOString().slice(0, 16);
+}
+
+function normalizeDuesTypeLabel(title: string) {
+  const cleaned = title
+    .replace(/\b(19|20)\d{2}\b/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/[-:|/]\s*$/, '')
+    .trim();
+  return cleaned || title;
+}
+
+function isoToLocalDateTimeValue(value?: string | null) {
+  if (!value) {
+    return '';
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return '';
+  }
+  const local = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
+function memberSearchLabel(member: UserDTO) {
+  return `${member.name} (${member.email})${member.alumniNumber ? ` - ${member.alumniNumber}` : ''}`;
 }
 
 export function WelfarePanel({
@@ -110,8 +176,8 @@ export function WelfarePanel({
     retainerAmount: '',
   });
   const [payoutDeductions, setPayoutDeductions] = useState<PayoutDeductionFormState[]>([]);
-  const [pendingDuesDeduction, setPendingDuesDeduction] = useState<{ invoiceId: string; amount: string }>({
-    invoiceId: '',
+  const [pendingDuesDeduction, setPendingDuesDeduction] = useState<{ groupKey: string; amount: string }>({
+    groupKey: '',
     amount: '',
   });
   const [pendingLiabilityDeduction, setPendingLiabilityDeduction] = useState<{ label: string; amount: string }>({
@@ -126,7 +192,17 @@ export function WelfarePanel({
     scopeId: '',
     targetAmount: '',
     currency: 'NGN',
+    beneficiaryType: 'member',
     beneficiaryUserId: '',
+    beneficiaryQuery: '',
+    externalBeneficiaryName: '',
+    externalBeneficiaryDetails: '',
+    attendanceRequired: false,
+    attendanceEventTitle: '',
+    attendanceEventDescription: '',
+    attendanceEventStartAt: '',
+    attendanceEventEndAt: '',
+    attendanceEventLocation: '',
   });
   const [categories, setCategories] = useState<WelfareCategoryDTO[]>([]);
   const [branches, setBranches] = useState<BranchDTO[]>([]);
@@ -142,8 +218,13 @@ export function WelfarePanel({
   const [submissionStatus, setSubmissionStatus] = useState<string | null>(null);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [creatingCase, setCreatingCase] = useState(false);
+  const [editingCaseId, setEditingCaseId] = useState<string | null>(null);
+  const [editCaseForm, setEditCaseForm] = useState<EditCaseFormState | null>(null);
+  const [savingCaseEdit, setSavingCaseEdit] = useState(false);
   const [caseStatusBusy, setCaseStatusBusy] = useState(false);
-  const [activeTab, setActiveTab] = useState<WelfareTab>('create');
+  const [activeTab, setActiveTab] = useState<WelfareTab>('manage');
+  const [caseTimelineTab, setCaseTimelineTab] = useState<WelfareCaseTimelineTab>('current');
+  const [caseDetailTab, setCaseDetailTab] = useState<WelfareCaseDetailTab>('contributors');
   const isScopeLocked = Boolean(activeScopeType);
   const effectiveScopeType = activeScopeType ?? caseForm.scopeType;
   const effectiveScopeId =
@@ -201,18 +282,32 @@ export function WelfarePanel({
         setClasses(classesData);
         setMembers(activeMembers);
         setCategories(categoriesData);
-        if (!caseForm.categoryId || !caseForm.beneficiaryUserId) {
-          setCaseForm((prev) => ({
+        setCaseForm((prev) => {
+          const next = {
             ...prev,
             categoryId: prev.categoryId || categoriesData[0]?.id || '',
-            beneficiaryUserId: prev.beneficiaryUserId || activeMembers[0]?.id || '',
-          }));
-        }
+          };
+          if (prev.beneficiaryType !== 'member') {
+            return next;
+          }
+          if (!prev.beneficiaryUserId) {
+            const defaultMember = activeMembers[0];
+            next.beneficiaryUserId = defaultMember?.id || '';
+            next.beneficiaryQuery = defaultMember ? memberSearchLabel(defaultMember) : '';
+            return next;
+          }
+          if (!prev.beneficiaryQuery) {
+            const selectedMember = activeMembers.find((member) => member.id === prev.beneficiaryUserId);
+            if (selectedMember) {
+              next.beneficiaryQuery = memberSearchLabel(selectedMember);
+            }
+          }
+          return next;
+        });
       })
       .catch((error) => {
         setSubmissionError(error instanceof Error ? error.message : 'Failed to load welfare setup data.');
       });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeScopeId, activeScopeType, authToken]);
 
   useEffect(() => {
@@ -291,18 +386,144 @@ export function WelfarePanel({
     };
   }, [selectedCaseId, authToken, initialCase]);
 
-  const selectedCase = useMemo(() => cases.find((c) => c.id === selectedCaseId) ?? null, [cases, selectedCaseId]);
+  const branchNameById = useMemo(
+    () => new Map(branches.map((branch) => [branch.id, branch.name])),
+    [branches],
+  );
+  const classLabelById = useMemo(
+    () => new Map(classes.map((classSet) => [classSet.id, classSet.label])),
+    [classes],
+  );
+  const currentCases = useMemo(
+    () => cases.filter((entry) => entry.status === 'open'),
+    [cases],
+  );
+  const pastCases = useMemo(
+    () => cases.filter((entry) => entry.status === 'closed'),
+    [cases],
+  );
+  const filteredCases = useMemo(
+    () => (caseTimelineTab === 'current' ? currentCases : pastCases),
+    [caseTimelineTab, currentCases, pastCases],
+  );
+  const selectedCase = useMemo(
+    () => cases.find((c) => c.id === selectedCaseId) ?? null,
+    [cases, selectedCaseId],
+  );
   const caseForStats = caseState.data ?? selectedCase;
-  const beneficiaryOutstandingInvoices: WelfareOutstandingInvoiceDTO[] = caseState.data?.beneficiaryOutstandingInvoices ?? [];
+  const beneficiaryOutstandingInvoices = useMemo<WelfareOutstandingInvoiceDTO[]>(
+    () => caseState.data?.beneficiaryOutstandingInvoices ?? [],
+    [caseState.data?.beneficiaryOutstandingInvoices],
+  );
+  const duesInvoiceAllocationById = useMemo(() => {
+    const allocated = new Map<string, number>();
+    payoutDeductions
+      .filter((row) => row.type === 'dues_invoice' && row.invoiceId)
+      .forEach((row) => {
+        const amount = Number(row.amount || 0);
+        if (!Number.isFinite(amount) || amount <= 0) {
+          return;
+        }
+        allocated.set(row.invoiceId, Number(((allocated.get(row.invoiceId) ?? 0) + amount).toFixed(2)));
+      });
+    return allocated;
+  }, [payoutDeductions]);
+  const duesDeductionGroups = useMemo<DuesDeductionGroup[]>(() => {
+    const grouped = new Map<string, DuesDeductionGroup>();
+    beneficiaryOutstandingInvoices.forEach((invoice) => {
+      const baseType = normalizeDuesTypeLabel(invoice.title || 'Dues invoice');
+      const amount = Number(invoice.amount ?? 0);
+      const allocated = duesInvoiceAllocationById.get(invoice.id) ?? 0;
+      const availableBalance = Number(Math.max(Number(invoice.balance ?? 0) - allocated, 0).toFixed(2));
+      if (availableBalance <= 0) {
+        return;
+      }
+      const key = `${baseType.toLowerCase()}::${invoice.currency}::${amount.toFixed(2)}`;
+      const existing = grouped.get(key);
+      if (existing) {
+        existing.outstanding = Number((existing.outstanding + availableBalance).toFixed(2));
+        existing.invoiceIds.push(invoice.id);
+        existing.count += 1;
+        return;
+      }
+      grouped.set(key, {
+        key,
+        label: `${baseType} (${amount.toLocaleString()} ${invoice.currency})`,
+        currency: invoice.currency,
+        amount,
+        outstanding: availableBalance,
+        invoiceIds: [invoice.id],
+        count: 1,
+      });
+    });
+    return Array.from(grouped.values()).sort((a, b) => a.label.localeCompare(b.label));
+  }, [beneficiaryOutstandingInvoices, duesInvoiceAllocationById]);
+
+  useEffect(() => {
+    if (filteredCases.length === 0) {
+      if (selectedCaseId) {
+        setSelectedCaseId('');
+      }
+      return;
+    }
+    const isSelectedVisible = filteredCases.some((entry) => entry.id === selectedCaseId);
+    if (!isSelectedVisible) {
+      setSelectedCaseId(filteredCases[0].id);
+      setCaseState((prev) => ({ ...prev, error: null }));
+      setCaseDetailTab('contributors');
+    }
+  }, [filteredCases, selectedCaseId]);
   const contributorOptions = useMemo(
     () =>
       members.map((member) => ({
         id: member.id,
         name: member.name,
-        label: `${member.name} (${member.email})`,
+        label: memberSearchLabel(member),
       })),
     [members],
   );
+  const beneficiaryOptions = useMemo(
+    () =>
+      members.map((member) => ({
+        id: member.id,
+        label: memberSearchLabel(member),
+      })),
+    [members],
+  );
+  const selectedBeneficiaryLabel = useMemo(() => {
+    if (caseForm.beneficiaryType === 'external') {
+      return caseForm.externalBeneficiaryName.trim() || 'External beneficiary not set';
+    }
+    if (!caseForm.beneficiaryUserId) {
+      return 'None selected';
+    }
+    return (
+      beneficiaryOptions.find((member) => member.id === caseForm.beneficiaryUserId)?.label ??
+      'None selected'
+    );
+  }, [
+    beneficiaryOptions,
+    caseForm.beneficiaryType,
+    caseForm.beneficiaryUserId,
+    caseForm.externalBeneficiaryName,
+  ]);
+  const selectedEditBeneficiaryLabel = useMemo(() => {
+    if (editCaseForm?.beneficiaryType === 'external') {
+      return editCaseForm.externalBeneficiaryName.trim() || 'External beneficiary not set';
+    }
+    if (!editCaseForm?.beneficiaryUserId) {
+      return 'None selected';
+    }
+    return (
+      beneficiaryOptions.find((member) => member.id === editCaseForm.beneficiaryUserId)?.label ??
+      'None selected'
+    );
+  }, [
+    beneficiaryOptions,
+    editCaseForm?.beneficiaryType,
+    editCaseForm?.beneficiaryUserId,
+    editCaseForm?.externalBeneficiaryName,
+  ]);
   const selectedContributorLabel = useMemo(() => {
     if (!contributionForm.contributorUserId) {
       return 'None selected';
@@ -363,6 +584,16 @@ export function WelfarePanel({
     return filteredQueue.slice(start, start + queuePageSize);
   }, [filteredQueue, queueCurrentPage, queuePageSize]);
 
+  function resolveCaseScopeLabel(caseItem: WelfareCaseDTO) {
+    if (caseItem.scopeType === 'branch') {
+      return caseItem.scopeId ? branchNameById.get(caseItem.scopeId) ?? 'Branch scope' : 'Branch scope';
+    }
+    if (caseItem.scopeType === 'class') {
+      return caseItem.scopeId ? classLabelById.get(caseItem.scopeId) ?? 'Class scope' : 'Class scope';
+    }
+    return 'Global scope';
+  }
+
   async function loadQueue() {
     setQueueLoading(true);
     try {
@@ -390,6 +621,16 @@ export function WelfarePanel({
     setCreatingCase(true);
     setSubmissionError(null);
     setSubmissionStatus(null);
+    if (caseForm.beneficiaryType === 'member' && !caseForm.beneficiaryUserId) {
+      setCreatingCase(false);
+      setSubmissionError('Select a beneficiary member from the search suggestions.');
+      return;
+    }
+    if (caseForm.beneficiaryType === 'external' && !caseForm.externalBeneficiaryName.trim()) {
+      setCreatingCase(false);
+      setSubmissionError('Enter the external beneficiary name.');
+      return;
+    }
 
     try {
       await fetchJson<WelfareCaseDTO>('/welfare/cases', {
@@ -403,7 +644,23 @@ export function WelfarePanel({
           scopeId: effectiveScopeType === 'global' ? undefined : effectiveScopeId,
           targetAmount: Number(caseForm.targetAmount || 0),
           currency: caseForm.currency,
-          beneficiaryUserId: caseForm.beneficiaryUserId || undefined,
+          beneficiaryType: caseForm.beneficiaryType,
+          beneficiaryUserId: caseForm.beneficiaryType === 'member' ? caseForm.beneficiaryUserId || undefined : undefined,
+          beneficiaryName: caseForm.beneficiaryType === 'external' ? caseForm.externalBeneficiaryName || undefined : undefined,
+          beneficiaryExternalDetails:
+            caseForm.beneficiaryType === 'external' ? caseForm.externalBeneficiaryDetails || undefined : undefined,
+          attendanceRequired: caseForm.attendanceRequired,
+          attendanceEventTitle: caseForm.attendanceRequired ? caseForm.attendanceEventTitle || undefined : undefined,
+          attendanceEventDescription: caseForm.attendanceRequired
+            ? caseForm.attendanceEventDescription || undefined
+            : undefined,
+          attendanceEventStartAt: caseForm.attendanceRequired
+            ? caseForm.attendanceEventStartAt || undefined
+            : undefined,
+          attendanceEventEndAt: caseForm.attendanceRequired ? caseForm.attendanceEventEndAt || undefined : undefined,
+          attendanceEventLocation: caseForm.attendanceRequired
+            ? caseForm.attendanceEventLocation || undefined
+            : undefined,
         }),
         token: authToken,
       });
@@ -419,14 +676,130 @@ export function WelfarePanel({
             : '',
         targetAmount: '',
         currency: 'NGN',
+        beneficiaryType: 'member',
         beneficiaryUserId: members[0]?.id ?? '',
+        beneficiaryQuery: members[0] ? memberSearchLabel(members[0]) : '',
+        externalBeneficiaryName: '',
+        externalBeneficiaryDetails: '',
+        attendanceRequired: false,
+        attendanceEventTitle: '',
+        attendanceEventDescription: '',
+        attendanceEventStartAt: '',
+        attendanceEventEndAt: '',
+        attendanceEventLocation: '',
       });
+      setActiveTab('manage');
       setSubmissionStatus('Welfare case created.');
       router.refresh();
     } catch (error) {
       setSubmissionError(error instanceof Error ? error.message : 'Failed to create welfare case.');
     } finally {
       setCreatingCase(false);
+    }
+  }
+
+  function beginEditCase(caseItem: WelfareCaseDTO) {
+    const beneficiary = members.find((member) => member.id === (caseItem.beneficiaryUserId ?? ''));
+    const beneficiaryType = caseItem.beneficiaryType === 'external' ? 'external' : 'member';
+    setEditingCaseId(caseItem.id);
+    setEditCaseForm({
+      title: caseItem.title,
+      description: caseItem.description,
+      categoryId: caseItem.categoryId ?? categories[0]?.id ?? '',
+      targetAmount: String(caseItem.targetAmount ?? 0),
+      currency: caseItem.currency ?? 'NGN',
+      beneficiaryType,
+      beneficiaryUserId: beneficiaryType === 'member' ? caseItem.beneficiaryUserId ?? '' : '',
+      beneficiaryQuery: beneficiaryType === 'member' ? (beneficiary ? memberSearchLabel(beneficiary) : '') : '',
+      externalBeneficiaryName: beneficiaryType === 'external' ? caseItem.beneficiaryName ?? '' : '',
+      externalBeneficiaryDetails: caseItem.beneficiaryExternalDetails ?? '',
+      attendanceRequired: Boolean(caseItem.attendanceRequired),
+      attendanceEventTitle: caseItem.attendanceEventTitle ?? caseItem.title ?? '',
+      attendanceEventDescription: '',
+      attendanceEventStartAt: isoToLocalDateTimeValue(caseItem.attendanceEventStartAt),
+      attendanceEventEndAt: '',
+      attendanceEventLocation: caseItem.attendanceEventLocation ?? '',
+    });
+    setSubmissionError(null);
+    setSubmissionStatus(null);
+  }
+
+  function cancelEditCase() {
+    setEditingCaseId(null);
+    setEditCaseForm(null);
+  }
+
+  async function handleEditCaseSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingCaseId || !editCaseForm) {
+      return;
+    }
+    if (editCaseForm.beneficiaryType === 'member' && !editCaseForm.beneficiaryUserId) {
+      setSubmissionError('Select a beneficiary member from the search suggestions.');
+      return;
+    }
+    if (editCaseForm.beneficiaryType === 'external' && !editCaseForm.externalBeneficiaryName.trim()) {
+      setSubmissionError('Enter the external beneficiary name.');
+      return;
+    }
+
+    const proceed = window.confirm('Save these welfare updates?');
+    if (!proceed) {
+      return;
+    }
+
+    setSavingCaseEdit(true);
+    setSubmissionError(null);
+    setSubmissionStatus(null);
+    try {
+      await fetchJson<WelfareCaseDTO>(`/welfare/cases/${editingCaseId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: editCaseForm.title,
+          description: editCaseForm.description,
+          categoryId: editCaseForm.categoryId,
+          targetAmount: Number(editCaseForm.targetAmount || 0),
+          currency: editCaseForm.currency,
+          beneficiaryType: editCaseForm.beneficiaryType,
+          beneficiaryUserId:
+            editCaseForm.beneficiaryType === 'member' ? editCaseForm.beneficiaryUserId : undefined,
+          beneficiaryName:
+            editCaseForm.beneficiaryType === 'external'
+              ? editCaseForm.externalBeneficiaryName
+              : undefined,
+          beneficiaryExternalDetails:
+            editCaseForm.beneficiaryType === 'external'
+              ? editCaseForm.externalBeneficiaryDetails || undefined
+              : undefined,
+          attendanceRequired: editCaseForm.attendanceRequired,
+          attendanceEventTitle: editCaseForm.attendanceRequired
+            ? editCaseForm.attendanceEventTitle || undefined
+            : undefined,
+          attendanceEventDescription: editCaseForm.attendanceRequired
+            ? editCaseForm.attendanceEventDescription || undefined
+            : undefined,
+          attendanceEventStartAt: editCaseForm.attendanceRequired
+            ? editCaseForm.attendanceEventStartAt || undefined
+            : undefined,
+          attendanceEventEndAt: editCaseForm.attendanceRequired
+            ? editCaseForm.attendanceEventEndAt || undefined
+            : undefined,
+          attendanceEventLocation: editCaseForm.attendanceRequired
+            ? editCaseForm.attendanceEventLocation || undefined
+            : undefined,
+        }),
+        token: authToken,
+      });
+
+      setSubmissionStatus('Welfare case updated.');
+      await refreshCase(editingCaseId);
+      cancelEditCase();
+      router.refresh();
+    } catch (error) {
+      setSubmissionError(error instanceof Error ? error.message : 'Failed to update welfare case.');
+    } finally {
+      setSavingCaseEdit(false);
     }
   }
 
@@ -504,39 +877,79 @@ export function WelfarePanel({
   }
 
   function addDuesDeduction() {
-    const invoiceId = pendingDuesDeduction.invoiceId;
+    const groupKey = pendingDuesDeduction.groupKey;
     const amountNumber = Number(pendingDuesDeduction.amount);
-    const invoice = beneficiaryOutstandingInvoices.find((row) => row.id === invoiceId);
-    if (!invoiceId || !invoice) {
-      setSubmissionError('Select a beneficiary outstanding dues invoice to deduct.');
+    const group = duesDeductionGroups.find((row) => row.key === groupKey);
+    if (!groupKey || !group) {
+      setSubmissionError('Select a beneficiary outstanding dues type/group to deduct.');
       return;
     }
     if (!Number.isFinite(amountNumber) || amountNumber <= 0) {
       setSubmissionError('Enter a valid dues deduction amount.');
       return;
     }
-    if (amountNumber > Number(invoice.balance ?? 0) + 0.01) {
-      setSubmissionError('Dues deduction cannot be greater than invoice outstanding balance.');
+    if (amountNumber > group.outstanding + 0.01) {
+      setSubmissionError('Dues deduction cannot be greater than group outstanding balance.');
       return;
     }
-    const duplicate = payoutDeductions.some(
-      (row) => row.type === 'dues_invoice' && row.invoiceId === invoiceId,
-    );
-    if (duplicate) {
-      setSubmissionError('This dues invoice is already added to deductions.');
+
+    const groupInvoices = beneficiaryOutstandingInvoices
+      .filter((invoice) => group.invoiceIds.includes(invoice.id))
+      .sort((a, b) => {
+        const aDate = a.periodStart ? new Date(a.periodStart).getTime() : 0;
+        const bDate = b.periodStart ? new Date(b.periodStart).getTime() : 0;
+        return aDate - bDate;
+      });
+
+    let remaining = Number(amountNumber.toFixed(2));
+    const allocations: Array<{ invoice: WelfareOutstandingInvoiceDTO; amount: number }> = [];
+    for (const invoice of groupInvoices) {
+      if (remaining <= 0) {
+        break;
+      }
+      const allocated = duesInvoiceAllocationById.get(invoice.id) ?? 0;
+      const available = Number(Math.max(Number(invoice.balance ?? 0) - allocated, 0).toFixed(2));
+      if (available <= 0) {
+        continue;
+      }
+      const applied = Number(Math.min(available, remaining).toFixed(2));
+      if (applied <= 0) {
+        continue;
+      }
+      allocations.push({ invoice, amount: applied });
+      remaining = Number((remaining - applied).toFixed(2));
+    }
+
+    if (allocations.length === 0 || remaining > 0.01) {
+      setSubmissionError('Unable to allocate deduction across selected dues invoices.');
       return;
     }
-    setPayoutDeductions((prev) => [
-      ...prev,
-      {
-        id: crypto.randomUUID(),
-        type: 'dues_invoice',
-        label: `Dues: ${invoice.title}`,
-        amount: amountNumber.toFixed(2),
-        invoiceId,
-      },
-    ]);
-    setPendingDuesDeduction({ invoiceId: '', amount: '' });
+
+    setPayoutDeductions((prev) => {
+      const next = [...prev];
+      allocations.forEach(({ invoice, amount }) => {
+        const existingIndex = next.findIndex(
+          (row) => row.type === 'dues_invoice' && row.invoiceId === invoice.id,
+        );
+        if (existingIndex >= 0) {
+          const mergedAmount = Number((Number(next[existingIndex].amount || 0) + amount).toFixed(2));
+          next[existingIndex] = {
+            ...next[existingIndex],
+            amount: mergedAmount.toFixed(2),
+          };
+          return;
+        }
+        next.push({
+          id: crypto.randomUUID(),
+          type: 'dues_invoice',
+          label: `Dues: ${invoice.title}`,
+          amount: amount.toFixed(2),
+          invoiceId: invoice.id,
+        });
+      });
+      return next;
+    });
+    setPendingDuesDeduction({ groupKey: '', amount: '' });
     setSubmissionError(null);
   }
 
@@ -615,7 +1028,7 @@ export function WelfarePanel({
         retainerAmount: '',
       });
       setPayoutDeductions([]);
-      setPendingDuesDeduction({ invoiceId: '', amount: '' });
+      setPendingDuesDeduction({ groupKey: '', amount: '' });
       setPendingLiabilityDeduction({ label: '', amount: '' });
       setSubmissionStatus('Payout submitted for approval.');
       await refreshCase(selectedCaseId);
@@ -686,21 +1099,29 @@ export function WelfarePanel({
         </div>
       )}
 
-      <section className="surface-card p-3 shadow-sm">
-        <div className="flex flex-wrap items-center gap-2">
+      <section className="rounded-xl border border-red-100 bg-red-50/70 p-2 shadow-sm">
+        <div className="grid gap-2 sm:grid-cols-2">
           <button
             type="button"
-            className={`btn-pill ${activeTab === 'create' ? 'border-red-200 bg-red-50 text-red-700' : ''}`}
-            onClick={() => setActiveTab('create')}
-          >
-            Create welfare
-          </button>
-          <button
-            type="button"
-            className={`btn-pill ${activeTab === 'manage' ? 'border-red-200 bg-red-50 text-red-700' : ''}`}
+            className={`rounded-lg border px-3 py-2 text-sm font-semibold transition ${
+              activeTab === 'manage'
+                ? 'border-red-300 bg-red-600 text-white shadow-sm'
+                : 'border-red-100 bg-white text-slate-700 hover:border-red-200 hover:bg-red-50'
+            }`}
             onClick={() => setActiveTab('manage')}
           >
             Manage welfare
+          </button>
+          <button
+            type="button"
+            className={`rounded-lg border px-3 py-2 text-sm font-semibold transition ${
+              activeTab === 'create'
+                ? 'border-red-300 bg-red-600 text-white shadow-sm'
+                : 'border-red-100 bg-white text-slate-700 hover:border-red-200 hover:bg-red-50'
+            }`}
+            onClick={() => setActiveTab('create')}
+          >
+            Create welfare
           </button>
         </div>
       </section>
@@ -715,7 +1136,18 @@ export function WelfarePanel({
               required
               className="field-input"
               value={caseForm.title}
-              onChange={(event) => setCaseForm((prev) => ({ ...prev, title: event.target.value }))}
+              onChange={(event) =>
+                setCaseForm((prev) => ({
+                  ...prev,
+                  title: event.target.value,
+                  attendanceEventTitle:
+                    prev.attendanceRequired &&
+                    (prev.attendanceEventTitle.trim().length === 0 ||
+                      prev.attendanceEventTitle.trim() === prev.title.trim())
+                      ? event.target.value
+                      : prev.attendanceEventTitle,
+                }))
+              }
             />
           </label>
           <label className="text-sm text-slate-600">
@@ -803,21 +1235,167 @@ export function WelfarePanel({
             />
           </label>
           <label className="text-sm text-slate-600">
-            Beneficiary member
+            Beneficiary type
             <select
-              required
               className="field-input"
-              value={caseForm.beneficiaryUserId}
-              onChange={(event) => setCaseForm((prev) => ({ ...prev, beneficiaryUserId: event.target.value }))}
+              value={caseForm.beneficiaryType}
+              onChange={(event) =>
+                setCaseForm((prev) => ({
+                  ...prev,
+                  beneficiaryType: event.target.value as 'member' | 'external',
+                  beneficiaryUserId:
+                    event.target.value === 'member'
+                      ? prev.beneficiaryUserId || members[0]?.id || ''
+                      : '',
+                  beneficiaryQuery:
+                    event.target.value === 'member'
+                      ? prev.beneficiaryQuery || (members[0] ? memberSearchLabel(members[0]) : '')
+                      : '',
+                  externalBeneficiaryName: event.target.value === 'external' ? prev.externalBeneficiaryName : '',
+                  externalBeneficiaryDetails: event.target.value === 'external' ? prev.externalBeneficiaryDetails : '',
+                }))
+              }
             >
-              <option value="">Select member</option>
-              {members.map((member) => (
-                <option key={member.id} value={member.id}>
-                  {member.name} ({member.email}){member.alumniNumber ? ` - ${member.alumniNumber}` : ''}
-                </option>
-              ))}
+              <option value="member">Member of association</option>
+              <option value="external">External/non-member</option>
             </select>
           </label>
+          {caseForm.beneficiaryType === 'member' ? (
+            <>
+              <label className="text-sm text-slate-600">
+                Beneficiary member
+                <input
+                  required
+                  list="welfare-beneficiary-members"
+                  className="field-input"
+                  placeholder="Search by name, email, or alumni number"
+                  value={caseForm.beneficiaryQuery}
+                  onChange={(event) => {
+                    const selected = beneficiaryOptions.find((member) => member.label === event.target.value);
+                    setCaseForm((prev) => ({
+                      ...prev,
+                      beneficiaryQuery: event.target.value,
+                      beneficiaryUserId: selected?.id ?? '',
+                    }));
+                  }}
+                />
+                <datalist id="welfare-beneficiary-members">
+                  {beneficiaryOptions.map((member) => (
+                    <option key={member.id} value={member.label} />
+                  ))}
+                </datalist>
+              </label>
+              <label className="text-sm text-slate-600">
+                Selected beneficiary
+                <input className="field-input" disabled value={selectedBeneficiaryLabel} />
+              </label>
+            </>
+          ) : (
+            <>
+              <label className="text-sm text-slate-600">
+                External beneficiary name
+                <input
+                  required
+                  className="field-input"
+                  placeholder="e.g. Late Principal John Doe"
+                  value={caseForm.externalBeneficiaryName}
+                  onChange={(event) =>
+                    setCaseForm((prev) => ({ ...prev, externalBeneficiaryName: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="text-sm text-slate-600">
+                External beneficiary details (optional)
+                <input
+                  className="field-input"
+                  placeholder="Relationship, next-of-kin, or payout context"
+                  value={caseForm.externalBeneficiaryDetails}
+                  onChange={(event) =>
+                    setCaseForm((prev) => ({ ...prev, externalBeneficiaryDetails: event.target.value }))
+                  }
+                />
+              </label>
+            </>
+          )}
+          <label className="text-sm text-slate-600 md:col-span-2">
+            <span className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={caseForm.attendanceRequired}
+                onChange={(event) =>
+                    setCaseForm((prev) => ({
+                      ...prev,
+                      attendanceRequired: event.target.checked,
+                      attendanceEventTitle: event.target.checked ? prev.attendanceEventTitle || prev.title || '' : '',
+                      attendanceEventDescription: event.target.checked ? prev.attendanceEventDescription : '',
+                      attendanceEventStartAt: event.target.checked ? prev.attendanceEventStartAt : '',
+                      attendanceEventEndAt: event.target.checked ? prev.attendanceEventEndAt : '',
+                    attendanceEventLocation: event.target.checked ? prev.attendanceEventLocation : '',
+                  }))
+                }
+              />
+              Attendance required for this welfare
+            </span>
+          </label>
+          {caseForm.attendanceRequired && (
+            <>
+              <label className="text-sm text-slate-600">
+                Attendance event title
+                <input
+                  required
+                  className="field-input"
+                  value={caseForm.attendanceEventTitle}
+                  onChange={(event) =>
+                    setCaseForm((prev) => ({ ...prev, attendanceEventTitle: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="text-sm text-slate-600">
+                Attendance start date/time
+                <input
+                  required
+                  type="datetime-local"
+                  className="field-input"
+                  value={caseForm.attendanceEventStartAt}
+                  onChange={(event) =>
+                    setCaseForm((prev) => ({ ...prev, attendanceEventStartAt: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="text-sm text-slate-600">
+                Attendance end date/time (optional)
+                <input
+                  type="datetime-local"
+                  className="field-input"
+                  value={caseForm.attendanceEventEndAt}
+                  onChange={(event) =>
+                    setCaseForm((prev) => ({ ...prev, attendanceEventEndAt: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="text-sm text-slate-600">
+                Event location (optional)
+                <input
+                  className="field-input"
+                  value={caseForm.attendanceEventLocation}
+                  onChange={(event) =>
+                    setCaseForm((prev) => ({ ...prev, attendanceEventLocation: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="text-sm text-slate-600 md:col-span-2">
+                Event description (optional)
+                <textarea
+                  rows={2}
+                  className="field-input"
+                  value={caseForm.attendanceEventDescription}
+                  onChange={(event) =>
+                    setCaseForm((prev) => ({ ...prev, attendanceEventDescription: event.target.value }))
+                  }
+                />
+              </label>
+            </>
+          )}
           <div className="md:col-span-2">
             <button
               type="submit"
@@ -942,395 +1520,919 @@ export function WelfarePanel({
         )}
       </section>
 
-      {cases.length > 0 && (
-        <section className="surface-card p-6 shadow-sm">
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex-1 min-w-[240px]">
-              <label className="text-xs uppercase text-slate-500">Case</label>
-              <select
-                className="field-input"
-                value={selectedCaseId}
-                onChange={(event) => {
-                  setSelectedCaseId(event.target.value);
-                  setCaseState((prev) => ({ ...prev, error: null }));
-                }}
-              >
-                {cases.map((caseItem) => (
-                  <option key={caseItem.id} value={caseItem.id}>
-                    {caseItem.title}
-                  </option>
-                ))}
-              </select>
+      <section className="surface-card p-6 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold text-slate-900">Manage welfare cases</h2>
+          <div className="rounded-xl border border-red-100 bg-red-50/70 p-2">
+            <div className="grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              className={`rounded-lg border px-3 py-2 text-sm font-semibold transition ${
+                caseTimelineTab === 'current'
+                  ? 'border-red-300 bg-red-600 text-white shadow-sm'
+                  : 'border-red-100 bg-white text-slate-700 hover:border-red-200 hover:bg-red-50'
+              }`}
+              onClick={() => setCaseTimelineTab('current')}
+            >
+              Current ({currentCases.length})
+            </button>
+            <button
+              type="button"
+              className={`rounded-lg border px-3 py-2 text-sm font-semibold transition ${
+                caseTimelineTab === 'past'
+                  ? 'border-red-300 bg-red-600 text-white shadow-sm'
+                  : 'border-red-100 bg-white text-slate-700 hover:border-red-200 hover:bg-red-50'
+              }`}
+              onClick={() => setCaseTimelineTab('past')}
+            >
+              Past ({pastCases.length})
+            </button>
             </div>
-            {caseState.loading && <p className="text-sm text-slate-500">Loading case...</p>}
-            {caseState.error && <p className="text-sm text-rose-600">{caseState.error}</p>}
-            {caseState.data && (
-              <button
-                type="button"
-                className="btn-pill disabled:opacity-50"
-                onClick={() => void handleCaseStatusChange(caseState.data?.status === 'open' ? 'closed' : 'open')}
-                disabled={caseStatusBusy}
-              >
-                {caseState.data.status === 'open' ? 'Close case' : 'Re-open case'}
-              </button>
+          </div>
+        </div>
+
+        {cases.length === 0 ? (
+          <p className="mt-4 text-sm text-slate-500">No welfare cases available yet.</p>
+        ) : (
+          <div className="mt-4 space-y-3">
+            {filteredCases.length === 0 ? (
+              <p className="text-sm text-slate-500">
+                No {caseTimelineTab === 'current' ? 'current' : 'past'} cases found.
+              </p>
+            ) : (
+              filteredCases.map((caseItem) => {
+                const isSelected = caseItem.id === selectedCaseId;
+                return (
+                  <div key={caseItem.id} className="space-y-3">
+                    <button
+                      key={caseItem.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedCaseId(caseItem.id);
+                        setCaseState((prev) => ({ ...prev, error: null }));
+                        setCaseDetailTab('contributors');
+                      }}
+                      className={`w-full rounded-xl border p-4 text-left transition ${
+                        isSelected
+                          ? 'border-red-300 bg-red-50/60'
+                          : 'border-slate-200 bg-white hover:border-red-200 hover:bg-red-50/30'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">{caseItem.title}</p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Recipient: {caseItem.beneficiaryName || 'Not assigned'}
+                            {caseItem.beneficiaryType === 'external' ? ' (External)' : ''}
+                          </p>
+                        </div>
+                        <span
+                          className={`rounded-full px-2 py-1 text-xs font-semibold uppercase ${
+                            caseItem.status === 'open'
+                              ? 'bg-red-100 text-red-700'
+                              : 'bg-slate-200 text-slate-700'
+                          }`}
+                        >
+                          {caseItem.status}
+                        </span>
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
+                        <p>
+                          Raised: <span className="font-semibold">{(caseItem.totalRaised ?? 0).toLocaleString()} {caseItem.currency}</span>
+                        </p>
+                        <p>
+                          Disbursed: <span className="font-semibold">{(caseItem.totalDisbursed ?? 0).toLocaleString()} {caseItem.currency}</span>
+                        </p>
+                        <p>
+                          Target: <span className="font-semibold">{caseItem.targetAmount.toLocaleString()} {caseItem.currency}</span>
+                        </p>
+                        <p>
+                          Scope: <span className="font-semibold">{resolveCaseScopeLabel(caseItem)}</span>
+                        </p>
+                        {caseItem.attendanceRequired && (
+                          <p className="col-span-2">
+                            Attendance event:{' '}
+                            <span className="font-semibold">
+                              {caseItem.attendanceEventTitle || 'Linked event'}
+                              {caseItem.attendanceEventStartAt
+                                ? ` (${new Date(caseItem.attendanceEventStartAt).toLocaleString()})`
+                                : ''}
+                            </span>
+                          </p>
+                        )}
+                      </div>
+                    </button>
+                    {isSelected && (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4">
+                    <div className="space-y-4">
+                      {!selectedCase ? (
+                        <p className="text-sm text-slate-500">Select a welfare case to view details.</p>
+                      ) : (
+                        <>
+                          <div className="rounded-xl border border-slate-200 bg-white p-4">
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <h3 className="text-base font-semibold text-slate-900">{selectedCase.title}</h3>
+                                <p className="mt-1 text-xs text-slate-500">
+                                  Recipient: {selectedCase.beneficiaryName || 'Not assigned'} | Scope:{' '}
+                                  {resolveCaseScopeLabel(selectedCase)}
+                                </p>
+                                {selectedCase.beneficiaryType === 'external' && selectedCase.beneficiaryExternalDetails && (
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    Beneficiary details: {selectedCase.beneficiaryExternalDetails}
+                                  </p>
+                                )}
+                                {selectedCase.attendanceRequired && (
+                                  <p className="mt-1 text-xs text-red-700">
+                                    Attendance required:{' '}
+                                    {selectedCase.attendanceEventTitle || 'Linked event'}
+                                    {selectedCase.attendanceEventStartAt
+                                      ? ` on ${new Date(selectedCase.attendanceEventStartAt).toLocaleString()}`
+                                      : ''}
+                                    {selectedCase.attendanceEventLocation
+                                      ? ` at ${selectedCase.attendanceEventLocation}`
+                                      : ''}
+                                  </p>
+                                )}
+                              </div>
+                              {caseState.data && (
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    className="btn-pill"
+                                    onClick={() => beginEditCase(selectedCase)}
+                                  >
+                                    Edit case
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn-pill disabled:opacity-50"
+                                    onClick={() =>
+                                      void handleCaseStatusChange(caseState.data?.status === 'open' ? 'closed' : 'open')
+                                    }
+                                    disabled={caseStatusBusy}
+                                  >
+                                    {caseState.data.status === 'open' ? 'Close case' : 'Re-open case'}
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+        
+                            {caseForStats && (
+                              <div className="mt-4 grid gap-4 md:grid-cols-4">
+                                <StatCard label="Target" value={`${caseForStats.targetAmount.toLocaleString()} ${caseForStats.currency}`} />
+                                <StatCard
+                                  label="Raised (approved)"
+                                  value={`${(caseForStats.totalRaised ?? 0).toLocaleString()} ${caseForStats.currency}`}
+                                  tone="positive"
+                                />
+                                <StatCard
+                                  label="Disbursed (approved)"
+                                  value={`${(caseForStats.totalDisbursed ?? 0).toLocaleString()} ${caseForStats.currency}`}
+                                />
+                                <StatCard label="Status" value={caseForStats.status.toUpperCase()} />
+                              </div>
+                            )}
+                          </div>
+
+                          {editingCaseId === selectedCase.id && editCaseForm && (
+                            <form onSubmit={handleEditCaseSubmit} className="surface-muted space-y-4 p-4">
+                              <div className="flex items-center justify-between gap-2">
+                                <h3 className="text-sm font-semibold text-slate-900">Edit welfare case</h3>
+                                <button
+                                  type="button"
+                                  className="btn-pill"
+                                  onClick={cancelEditCase}
+                                  disabled={savingCaseEdit}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                              <div className="grid gap-4 md:grid-cols-2">
+                                <label className="text-xs text-slate-500">
+                                  Title
+                                  <input
+                                    required
+                                    className="field-input"
+                                    value={editCaseForm.title}
+                                    onChange={(event) =>
+                                      setEditCaseForm((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              title: event.target.value,
+                                              attendanceEventTitle:
+                                                prev.attendanceRequired &&
+                                                (prev.attendanceEventTitle.trim().length === 0 ||
+                                                  prev.attendanceEventTitle.trim() === prev.title.trim())
+                                                  ? event.target.value
+                                                  : prev.attendanceEventTitle,
+                                            }
+                                          : prev,
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="text-xs text-slate-500">
+                                  Category
+                                  <select
+                                    required
+                                    className="field-input"
+                                    value={editCaseForm.categoryId}
+                                    onChange={(event) =>
+                                      setEditCaseForm((prev) =>
+                                        prev ? { ...prev, categoryId: event.target.value } : prev,
+                                      )
+                                    }
+                                  >
+                                    <option value="">Select category</option>
+                                    {categories.map((category) => (
+                                      <option key={category.id} value={category.id}>
+                                        {category.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label className="text-xs text-slate-500 md:col-span-2">
+                                  Description
+                                  <textarea
+                                    required
+                                    rows={3}
+                                    className="field-input"
+                                    value={editCaseForm.description}
+                                    onChange={(event) =>
+                                      setEditCaseForm((prev) =>
+                                        prev ? { ...prev, description: event.target.value } : prev,
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="text-xs text-slate-500">
+                                  Target amount
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    className="field-input"
+                                    value={editCaseForm.targetAmount}
+                                    onChange={(event) =>
+                                      setEditCaseForm((prev) =>
+                                        prev ? { ...prev, targetAmount: event.target.value } : prev,
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="text-xs text-slate-500">
+                                  Currency
+                                  <input
+                                    className="field-input uppercase"
+                                    maxLength={3}
+                                    value={editCaseForm.currency}
+                                    onChange={(event) =>
+                                      setEditCaseForm((prev) =>
+                                        prev
+                                          ? { ...prev, currency: event.target.value.toUpperCase() }
+                                          : prev,
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="text-xs text-slate-500">
+                                  Beneficiary type
+                                  <select
+                                    className="field-input"
+                                    value={editCaseForm.beneficiaryType}
+                                    onChange={(event) =>
+                                      setEditCaseForm((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              beneficiaryType: event.target.value as 'member' | 'external',
+                                              beneficiaryUserId:
+                                                event.target.value === 'member'
+                                                  ? prev.beneficiaryUserId || members[0]?.id || ''
+                                                  : '',
+                                              beneficiaryQuery:
+                                                event.target.value === 'member'
+                                                  ? prev.beneficiaryQuery || (members[0] ? memberSearchLabel(members[0]) : '')
+                                                  : '',
+                                              externalBeneficiaryName:
+                                                event.target.value === 'external'
+                                                  ? prev.externalBeneficiaryName
+                                                  : '',
+                                              externalBeneficiaryDetails:
+                                                event.target.value === 'external'
+                                                  ? prev.externalBeneficiaryDetails
+                                                  : '',
+                                            }
+                                          : prev,
+                                      )
+                                    }
+                                  >
+                                    <option value="member">Member of association</option>
+                                    <option value="external">External/non-member</option>
+                                  </select>
+                                </label>
+                                {editCaseForm.beneficiaryType === 'member' ? (
+                                  <>
+                                    <label className="text-xs text-slate-500">
+                                      Beneficiary member
+                                      <input
+                                        required
+                                        list="welfare-edit-beneficiary-members"
+                                        className="field-input"
+                                        placeholder="Search by name, email, or alumni number"
+                                        value={editCaseForm.beneficiaryQuery}
+                                        onChange={(event) => {
+                                          const selected = beneficiaryOptions.find(
+                                            (member) => member.label === event.target.value,
+                                          );
+                                          setEditCaseForm((prev) =>
+                                            prev
+                                              ? {
+                                                  ...prev,
+                                                  beneficiaryQuery: event.target.value,
+                                                  beneficiaryUserId: selected?.id ?? '',
+                                                }
+                                              : prev,
+                                          );
+                                        }}
+                                      />
+                                      <datalist id="welfare-edit-beneficiary-members">
+                                        {beneficiaryOptions.map((member) => (
+                                          <option key={member.id} value={member.label} />
+                                        ))}
+                                      </datalist>
+                                    </label>
+                                    <label className="text-xs text-slate-500">
+                                      Selected beneficiary
+                                      <input className="field-input" disabled value={selectedEditBeneficiaryLabel} />
+                                    </label>
+                                  </>
+                                ) : (
+                                  <>
+                                    <label className="text-xs text-slate-500">
+                                      External beneficiary name
+                                      <input
+                                        required
+                                        className="field-input"
+                                        placeholder="e.g. Late Principal John Doe"
+                                        value={editCaseForm.externalBeneficiaryName}
+                                        onChange={(event) =>
+                                          setEditCaseForm((prev) =>
+                                            prev
+                                              ? { ...prev, externalBeneficiaryName: event.target.value }
+                                              : prev,
+                                          )
+                                        }
+                                      />
+                                    </label>
+                                    <label className="text-xs text-slate-500">
+                                      External beneficiary details (optional)
+                                      <input
+                                        className="field-input"
+                                        placeholder="Relationship, next-of-kin, or payout context"
+                                        value={editCaseForm.externalBeneficiaryDetails}
+                                        onChange={(event) =>
+                                          setEditCaseForm((prev) =>
+                                            prev
+                                              ? { ...prev, externalBeneficiaryDetails: event.target.value }
+                                              : prev,
+                                          )
+                                        }
+                                      />
+                                    </label>
+                                  </>
+                                )}
+                                <label className="text-xs text-slate-500 md:col-span-2">
+                                  <span className="flex items-center gap-2">
+                                    <input
+                                      type="checkbox"
+                                      checked={editCaseForm.attendanceRequired}
+                                      onChange={(event) =>
+                                        setEditCaseForm((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                attendanceRequired: event.target.checked,
+                                                attendanceEventTitle: event.target.checked
+                                                  ? prev.attendanceEventTitle || prev.title
+                                                  : '',
+                                                attendanceEventDescription: event.target.checked
+                                                  ? prev.attendanceEventDescription
+                                                  : '',
+                                                attendanceEventStartAt: event.target.checked
+                                                  ? prev.attendanceEventStartAt
+                                                  : '',
+                                                attendanceEventEndAt: event.target.checked
+                                                  ? prev.attendanceEventEndAt
+                                                  : '',
+                                                attendanceEventLocation: event.target.checked
+                                                  ? prev.attendanceEventLocation
+                                                  : '',
+                                              }
+                                            : prev,
+                                        )
+                                      }
+                                    />
+                                    Attendance required for this welfare
+                                  </span>
+                                </label>
+                                {editCaseForm.attendanceRequired && (
+                                  <>
+                                    <label className="text-xs text-slate-500">
+                                      Attendance event title
+                                      <input
+                                        required
+                                        className="field-input"
+                                        value={editCaseForm.attendanceEventTitle}
+                                        onChange={(event) =>
+                                          setEditCaseForm((prev) =>
+                                            prev
+                                              ? { ...prev, attendanceEventTitle: event.target.value }
+                                              : prev,
+                                          )
+                                        }
+                                      />
+                                    </label>
+                                    <label className="text-xs text-slate-500">
+                                      Attendance start date/time
+                                      <input
+                                        required
+                                        type="datetime-local"
+                                        className="field-input"
+                                        value={editCaseForm.attendanceEventStartAt}
+                                        onChange={(event) =>
+                                          setEditCaseForm((prev) =>
+                                            prev
+                                              ? { ...prev, attendanceEventStartAt: event.target.value }
+                                              : prev,
+                                          )
+                                        }
+                                      />
+                                    </label>
+                                    <label className="text-xs text-slate-500">
+                                      Attendance end date/time (optional)
+                                      <input
+                                        type="datetime-local"
+                                        className="field-input"
+                                        value={editCaseForm.attendanceEventEndAt}
+                                        onChange={(event) =>
+                                          setEditCaseForm((prev) =>
+                                            prev
+                                              ? { ...prev, attendanceEventEndAt: event.target.value }
+                                              : prev,
+                                          )
+                                        }
+                                      />
+                                    </label>
+                                    <label className="text-xs text-slate-500">
+                                      Event location (optional)
+                                      <input
+                                        className="field-input"
+                                        value={editCaseForm.attendanceEventLocation}
+                                        onChange={(event) =>
+                                          setEditCaseForm((prev) =>
+                                            prev
+                                              ? { ...prev, attendanceEventLocation: event.target.value }
+                                              : prev,
+                                          )
+                                        }
+                                      />
+                                    </label>
+                                    <label className="text-xs text-slate-500 md:col-span-2">
+                                      Event description (optional)
+                                      <textarea
+                                        rows={2}
+                                        className="field-input"
+                                        value={editCaseForm.attendanceEventDescription}
+                                        onChange={(event) =>
+                                          setEditCaseForm((prev) =>
+                                            prev
+                                              ? { ...prev, attendanceEventDescription: event.target.value }
+                                              : prev,
+                                          )
+                                        }
+                                      />
+                                    </label>
+                                  </>
+                                )}
+                              </div>
+                              <div>
+                                <button
+                                  type="submit"
+                                  className="btn-primary disabled:opacity-50"
+                                  disabled={savingCaseEdit}
+                                >
+                                  {savingCaseEdit ? 'Saving...' : 'Save changes'}
+                                </button>
+                              </div>
+                            </form>
+                          )}
+        
+                          {caseState.loading && <p className="text-sm text-slate-500">Loading case...</p>}
+                          {caseState.error && <p className="text-sm text-rose-600">{caseState.error}</p>}
+        
+                          {caseState.data && (
+                            <div className="space-y-4">
+                              <div className="rounded-xl border border-red-100 bg-red-50/70 p-2 shadow-sm">
+                                <div className="grid gap-2 sm:grid-cols-3">
+                                  <button
+                                    type="button"
+                                    className={`rounded-lg border px-3 py-2 text-sm font-semibold transition ${
+                                      caseDetailTab === 'contributors'
+                                        ? 'border-red-300 bg-red-600 text-white shadow-sm'
+                                        : 'border-red-100 bg-white text-slate-700 hover:border-red-200 hover:bg-red-50'
+                                    }`}
+                                    onClick={() => setCaseDetailTab('contributors')}
+                                  >
+                                    Contributors
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={`rounded-lg border px-3 py-2 text-sm font-semibold transition ${
+                                      caseDetailTab === 'post'
+                                        ? 'border-red-300 bg-red-600 text-white shadow-sm'
+                                        : 'border-red-100 bg-white text-slate-700 hover:border-red-200 hover:bg-red-50'
+                                    }`}
+                                    onClick={() => setCaseDetailTab('post')}
+                                  >
+                                    Post
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={`rounded-lg border px-3 py-2 text-sm font-semibold transition ${
+                                      caseDetailTab === 'payout'
+                                        ? 'border-red-300 bg-red-600 text-white shadow-sm'
+                                        : 'border-red-100 bg-white text-slate-700 hover:border-red-200 hover:bg-red-50'
+                                    }`}
+                                    onClick={() => setCaseDetailTab('payout')}
+                                  >
+                                    Payout
+                                  </button>
+                                </div>
+                              </div>
+        
+                              {caseDetailTab === 'contributors' && (
+                              <DataTable
+                                title="Contributions"
+                                emptyLabel="No contributions yet."
+                                headers={['Contributor', 'Amount', 'Evidence', 'Status', 'Date']}
+                                rows={caseState.data.contributions.map((contribution) => [
+                                  contribution.contributorName,
+                                  `${contribution.amount.toLocaleString()} ${contribution.currency}`,
+                                  contribution.paymentEvidenceUrl ? (
+                                    <a
+                                      href={contribution.paymentEvidenceUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-red-700 underline"
+                                    >
+                                      {contribution.paymentEvidenceName || 'View evidence'}
+                                    </a>
+                                  ) : (
+                                    'None'
+                                  ),
+                                  contribution.status,
+                                  contribution.paidAt ? new Date(contribution.paidAt).toLocaleString() : '-',
+                                ])}
+                              />
+                              )}
+        
+                              {caseDetailTab === 'post' && (
+                                <form onSubmit={handleContributionSubmit} className="space-y-3 surface-muted p-4">
+                                  <h3 className="text-sm font-semibold text-slate-900">Record contribution</h3>
+                                  <label className="text-xs text-slate-500">
+                                    Contributor member
+                                    <input
+                                      required
+                                      list="welfare-contributor-members"
+                                      className="field-input"
+                                      placeholder="Search member by name or email"
+                                      value={contributionForm.contributorQuery}
+                                      onChange={(event) => {
+                                        const selected = contributorOptions.find(
+                                          (member) => member.label === event.target.value,
+                                        );
+                                        setContributionForm((prev) => ({
+                                          ...prev,
+                                          contributorQuery: event.target.value,
+                                          contributorUserId: selected?.id ?? '',
+                                        }));
+                                      }}
+                                    />
+                                    <datalist id="welfare-contributor-members">
+                                      {contributorOptions.map((member) => (
+                                        <option key={member.id} value={member.label} />
+                                      ))}
+                                    </datalist>
+                                  </label>
+                                  <label className="text-xs text-slate-500">
+                                    Selected member
+                                    <input className="field-input" value={selectedContributorLabel} disabled />
+                                  </label>
+                                  <label className="text-xs text-slate-500">
+                                    Amount ({caseState.data.currency})
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      required
+                                      className="field-input"
+                                      value={contributionForm.amount}
+                                      onChange={(event) =>
+                                        setContributionForm((prev) => ({ ...prev, amount: event.target.value }))
+                                      }
+                                    />
+                                  </label>
+                                  <label className="text-xs text-slate-500">
+                                    Notes
+                                    <textarea
+                                      className="field-input"
+                                      rows={3}
+                                      value={contributionForm.notes}
+                                      onChange={(event) =>
+                                        setContributionForm((prev) => ({ ...prev, notes: event.target.value }))
+                                      }
+                                    />
+                                  </label>
+                                  <label className="text-xs text-slate-500">
+                                    Posting date/time
+                                    <input
+                                      type="datetime-local"
+                                      className="field-input"
+                                      value={contributionForm.paidAt}
+                                      onChange={(event) =>
+                                        setContributionForm((prev) => ({ ...prev, paidAt: event.target.value }))
+                                      }
+                                    />
+                                  </label>
+                                  <button type="submit" className="btn-primary">
+                                    Submit contribution
+                                  </button>
+                                </form>
+                              )}
+        
+                              {caseDetailTab === 'payout' && (
+                                <div className="space-y-4">
+                                <form onSubmit={handlePayoutSubmit} className="space-y-3 surface-muted p-4">
+                                  <h3 className="text-sm font-semibold text-slate-900">Record payout</h3>
+                                  <label className="text-xs text-slate-500">
+                                    Gross amount ({caseState.data.currency})
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      required
+                                      className="field-input"
+                                      value={payoutForm.amount}
+                                      onChange={(event) =>
+                                        setPayoutForm((prev) => ({ ...prev, amount: event.target.value }))
+                                      }
+                                    />
+                                  </label>
+                                  <div className="rounded-xl border border-slate-200 bg-white p-3">
+                                    <p className="text-xs font-semibold uppercase text-slate-500">Retainer configuration (optional)</p>
+                                    <div className="mt-2 grid gap-2 md:grid-cols-2">
+                                      <label className="text-xs text-slate-500">
+                                        Mode
+                                        <select
+                                          className="field-input"
+                                          value={payoutForm.retainerMode}
+                                          onChange={(event) =>
+                                            setPayoutForm((prev) => ({
+                                              ...prev,
+                                              retainerMode: event.target.value as PayoutFormState['retainerMode'],
+                                            }))
+                                          }
+                                        >
+                                          <option value="none">No retainer</option>
+                                          <option value="percentage">Percentage</option>
+                                          <option value="fixed">Fixed amount</option>
+                                        </select>
+                                      </label>
+                                      {payoutForm.retainerMode === 'percentage' && (
+                                        <label className="text-xs text-slate-500">
+                                          Retainer percentage (%)
+                                          <input
+                                            type="number"
+                                            min="0"
+                                            max="100"
+                                            step="0.01"
+                                            className="field-input"
+                                            value={payoutForm.retainerPercentage}
+                                            onChange={(event) =>
+                                              setPayoutForm((prev) => ({ ...prev, retainerPercentage: event.target.value }))
+                                            }
+                                          />
+                                        </label>
+                                      )}
+                                      {payoutForm.retainerMode === 'fixed' && (
+                                        <label className="text-xs text-slate-500">
+                                          Retainer amount ({caseState.data.currency})
+                                          <input
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            className="field-input"
+                                            value={payoutForm.retainerAmount}
+                                            onChange={(event) =>
+                                              setPayoutForm((prev) => ({ ...prev, retainerAmount: event.target.value }))
+                                            }
+                                          />
+                                        </label>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-xl border border-slate-200 bg-white p-3">
+                                    <p className="text-xs font-semibold uppercase text-slate-500">Add dues deduction</p>
+                                    <div className="mt-2 grid gap-2 md:grid-cols-3">
+                                      <select
+                                        className="field-input md:col-span-2"
+                                        value={pendingDuesDeduction.groupKey}
+                                        onChange={(event) =>
+                                          setPendingDuesDeduction((prev) => ({ ...prev, groupKey: event.target.value }))
+                                        }
+                                      >
+                                        <option value="">Select dues type/group</option>
+                                        {duesDeductionGroups.map((group) => (
+                                          <option key={group.key} value={group.key}>
+                                            {group.label} - Outstanding {group.outstanding.toLocaleString()} {group.currency} ({group.count} invoice{group.count > 1 ? 's' : ''})
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        className="field-input"
+                                        placeholder="Amount"
+                                        value={pendingDuesDeduction.amount}
+                                        onChange={(event) =>
+                                          setPendingDuesDeduction((prev) => ({ ...prev, amount: event.target.value }))
+                                        }
+                                      />
+                                    </div>
+                                    <button type="button" className="mt-2 btn-pill" onClick={addDuesDeduction}>
+                                      Add dues deduction
+                                    </button>
+                                  </div>
+                                  <div className="rounded-xl border border-slate-200 bg-white p-3">
+                                    <p className="text-xs font-semibold uppercase text-slate-500">Add liability deduction</p>
+                                    <div className="mt-2 grid gap-2 md:grid-cols-3">
+                                      <input
+                                        className="field-input md:col-span-2"
+                                        placeholder="Label (e.g., prior liabilities)"
+                                        value={pendingLiabilityDeduction.label}
+                                        onChange={(event) =>
+                                          setPendingLiabilityDeduction((prev) => ({ ...prev, label: event.target.value }))
+                                        }
+                                      />
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        className="field-input"
+                                        placeholder="Amount"
+                                        value={pendingLiabilityDeduction.amount}
+                                        onChange={(event) =>
+                                          setPendingLiabilityDeduction((prev) => ({ ...prev, amount: event.target.value }))
+                                        }
+                                      />
+                                    </div>
+                                    <button type="button" className="mt-2 btn-pill" onClick={addLiabilityDeduction}>
+                                      Add liability deduction
+                                    </button>
+                                  </div>
+                                  <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600">
+                                    <p>
+                                      Retainer deduction:{' '}
+                                      <span className="font-semibold">
+                                        {retainerDeductionAmount.toLocaleString()} {caseState.data.currency}
+                                      </span>
+                                    </p>
+                                    <p>
+                                      Extra deductions:{' '}
+                                      <span className="font-semibold">
+                                        {customDeductionsTotal.toLocaleString()} {caseState.data.currency}
+                                      </span>
+                                    </p>
+                                    <p>
+                                      Total deductions:{' '}
+                                      <span className="font-semibold">
+                                        {payoutTotalDeductions.toLocaleString()} {caseState.data.currency}
+                                      </span>
+                                    </p>
+                                    <p>
+                                      Net payout to beneficiary:{' '}
+                                      <span className="font-semibold">
+                                        {payoutNetPreview.toLocaleString()} {caseState.data.currency}
+                                      </span>
+                                    </p>
+                                  </div>
+                                  {payoutDeductions.length > 0 && (
+                                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                                      <p className="text-xs font-semibold uppercase text-slate-500">Queued deductions</p>
+                                      <ul className="mt-2 space-y-2 text-xs text-slate-700">
+                                        {payoutDeductions.map((row) => (
+                                          <li
+                                            key={row.id}
+                                            className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-2 py-1"
+                                          >
+                                            <span>
+                                              {row.label} - {Number(row.amount).toLocaleString()} {caseState.data.currency}
+                                            </span>
+                                            <button type="button" className="btn-pill" onClick={() => removePayoutDeduction(row.id)}>
+                                              Remove
+                                            </button>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )}
+                                  <label className="text-xs text-slate-500">
+                                    Channel
+                                    <select
+                                      required
+                                      className="field-input"
+                                      value={payoutForm.channel}
+                                      onChange={(event) =>
+                                        setPayoutForm((prev) => ({ ...prev, channel: event.target.value }))
+                                      }
+                                    >
+                                      <option value="transfer">Transfer</option>
+                                      <option value="cash">Cash</option>
+                                      <option value="cheque">Cheque</option>
+                                      <option value="card">Card/POS</option>
+                                      <option value="wallet">Wallet</option>
+                                      <option value="other">Other</option>
+                                    </select>
+                                  </label>
+                                  <label className="text-xs text-slate-500">
+                                    Reference
+                                    <input
+                                      className="field-input"
+                                      value={payoutForm.reference}
+                                      onChange={(event) =>
+                                        setPayoutForm((prev) => ({ ...prev, reference: event.target.value }))
+                                      }
+                                    />
+                                  </label>
+                                  <label className="text-xs text-slate-500">
+                                    Notes
+                                    <textarea
+                                      className="field-input"
+                                      rows={3}
+                                      value={payoutForm.notes}
+                                      onChange={(event) =>
+                                        setPayoutForm((prev) => ({ ...prev, notes: event.target.value }))
+                                      }
+                                    />
+                                  </label>
+                                  <label className="text-xs text-slate-500">
+                                    Posting date/time
+                                    <input
+                                      type="datetime-local"
+                                      className="field-input"
+                                      value={payoutForm.disbursedAt}
+                                      onChange={(event) =>
+                                        setPayoutForm((prev) => ({ ...prev, disbursedAt: event.target.value }))
+                                      }
+                                    />
+                                  </label>
+                                  <button type="submit" className="btn-secondary">
+                                    Submit payout
+                                  </button>
+                                </form>
+                                <DataTable
+                                  title="Payouts"
+                                  emptyLabel="No payouts yet."
+                                  headers={['Gross', 'Deductions', 'Net', 'Channel', 'Status', 'Date']}
+                                  rows={caseState.data.payouts.map((payout) => [
+                                    `${(payout.grossAmount ?? payout.amount).toLocaleString()} ${payout.currency}`,
+                                    `${(payout.totalDeductions ?? 0).toLocaleString()} ${payout.currency}`,
+                                    `${(payout.netAmount ?? payout.amount).toLocaleString()} ${payout.currency}`,
+                                    payout.channel,
+                                    payout.status,
+                                    payout.disbursedAt ? new Date(payout.disbursedAt).toLocaleString() : '-',
+                                  ])}
+                                />
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
-
-          {caseForStats && (
-            <div className="mt-4 grid gap-4 md:grid-cols-4">
-              <StatCard label="Target" value={`${caseForStats.targetAmount.toLocaleString()} ${caseForStats.currency}`} />
-              <StatCard
-                label="Raised (approved)"
-                value={`${(caseForStats.totalRaised ?? 0).toLocaleString()} ${caseForStats.currency}`}
-                tone="positive"
-              />
-              <StatCard
-                label="Disbursed (approved)"
-                value={`${(caseForStats.totalDisbursed ?? 0).toLocaleString()} ${caseForStats.currency}`}
-              />
-              <StatCard label="Status" value={caseForStats.status.toUpperCase()} />
-            </div>
-          )}
-
-          {caseState.data && (
-            <div className="mt-6 space-y-6">
-              <div className="grid gap-4 md:grid-cols-2">
-                <form onSubmit={handleContributionSubmit} className="space-y-3 surface-muted p-4">
-                  <h3 className="text-sm font-semibold text-slate-900">Record contribution</h3>
-                  <label className="text-xs text-slate-500">
-                    Contributor member
-                    <input
-                      required
-                      list="welfare-contributor-members"
-                      className="field-input"
-                      placeholder="Search member by name or email"
-                      value={contributionForm.contributorQuery}
-                      onChange={(event) => {
-                        const selected = contributorOptions.find(
-                          (member) => member.label === event.target.value,
-                        );
-                        setContributionForm((prev) => ({
-                          ...prev,
-                          contributorQuery: event.target.value,
-                          contributorUserId: selected?.id ?? '',
-                        }));
-                      }}
-                    />
-                    <datalist id="welfare-contributor-members">
-                      {contributorOptions.map((member) => (
-                        <option key={member.id} value={member.label} />
-                      ))}
-                    </datalist>
-                  </label>
-                  <label className="text-xs text-slate-500">
-                    Selected member
-                    <input className="field-input" value={selectedContributorLabel} disabled />
-                  </label>
-                  <label className="text-xs text-slate-500">
-                    Amount ({caseState.data.currency})
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      required
-                      className="field-input"
-                      value={contributionForm.amount}
-                      onChange={(event) =>
-                        setContributionForm((prev) => ({ ...prev, amount: event.target.value }))
-                      }
-                    />
-                  </label>
-                  <label className="text-xs text-slate-500">
-                    Notes
-                    <textarea
-                      className="field-input"
-                      rows={3}
-                      value={contributionForm.notes}
-                      onChange={(event) =>
-                        setContributionForm((prev) => ({ ...prev, notes: event.target.value }))
-                      }
-                    />
-                  </label>
-                  <label className="text-xs text-slate-500">
-                    Posting date/time
-                    <input
-                      type="datetime-local"
-                      className="field-input"
-                      value={contributionForm.paidAt}
-                      onChange={(event) =>
-                        setContributionForm((prev) => ({ ...prev, paidAt: event.target.value }))
-                      }
-                    />
-                  </label>
-                  <button
-                    type="submit"
-                    className="btn-primary"
-                  >
-                    Submit contribution
-                  </button>
-                </form>
-
-                <form onSubmit={handlePayoutSubmit} className="space-y-3 surface-muted p-4">
-                  <h3 className="text-sm font-semibold text-slate-900">Record payout</h3>
-                  <label className="text-xs text-slate-500">
-                    Gross amount ({caseState.data.currency})
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      required
-                      className="field-input"
-                      value={payoutForm.amount}
-                      onChange={(event) =>
-                        setPayoutForm((prev) => ({ ...prev, amount: event.target.value }))
-                      }
-                    />
-                  </label>
-                  <div className="rounded-xl border border-slate-200 bg-white p-3">
-                    <p className="text-xs font-semibold uppercase text-slate-500">Retainer configuration (optional)</p>
-                    <div className="mt-2 grid gap-2 md:grid-cols-2">
-                      <label className="text-xs text-slate-500">
-                        Mode
-                        <select
-                          className="field-input"
-                          value={payoutForm.retainerMode}
-                          onChange={(event) =>
-                            setPayoutForm((prev) => ({
-                              ...prev,
-                              retainerMode: event.target.value as PayoutFormState['retainerMode'],
-                            }))
-                          }
-                        >
-                          <option value="none">No retainer</option>
-                          <option value="percentage">Percentage</option>
-                          <option value="fixed">Fixed amount</option>
-                        </select>
-                      </label>
-                      {payoutForm.retainerMode === 'percentage' && (
-                        <label className="text-xs text-slate-500">
-                          Retainer percentage (%)
-                          <input
-                            type="number"
-                            min="0"
-                            max="100"
-                            step="0.01"
-                            className="field-input"
-                            value={payoutForm.retainerPercentage}
-                            onChange={(event) =>
-                              setPayoutForm((prev) => ({ ...prev, retainerPercentage: event.target.value }))
-                            }
-                          />
-                        </label>
-                      )}
-                      {payoutForm.retainerMode === 'fixed' && (
-                        <label className="text-xs text-slate-500">
-                          Retainer amount ({caseState.data.currency})
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            className="field-input"
-                            value={payoutForm.retainerAmount}
-                            onChange={(event) =>
-                              setPayoutForm((prev) => ({ ...prev, retainerAmount: event.target.value }))
-                            }
-                          />
-                        </label>
-                      )}
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-white p-3">
-                    <p className="text-xs font-semibold uppercase text-slate-500">Add dues deduction</p>
-                    <div className="mt-2 grid gap-2 md:grid-cols-3">
-                      <select
-                        className="field-input md:col-span-2"
-                        value={pendingDuesDeduction.invoiceId}
-                        onChange={(event) =>
-                          setPendingDuesDeduction((prev) => ({ ...prev, invoiceId: event.target.value }))
-                        }
-                      >
-                        <option value="">Select beneficiary dues invoice</option>
-                        {beneficiaryOutstandingInvoices
-                          .filter(
-                            (invoice) =>
-                              !payoutDeductions.some(
-                                (row) => row.type === 'dues_invoice' && row.invoiceId === invoice.id,
-                              ),
-                          )
-                          .map((invoice) => (
-                          <option key={invoice.id} value={invoice.id}>
-                            {invoice.title} - {invoice.balance.toLocaleString()} {invoice.currency}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        className="field-input"
-                        placeholder="Amount"
-                        value={pendingDuesDeduction.amount}
-                        onChange={(event) =>
-                          setPendingDuesDeduction((prev) => ({ ...prev, amount: event.target.value }))
-                        }
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      className="mt-2 btn-pill"
-                      onClick={addDuesDeduction}
-                    >
-                      Add dues deduction
-                    </button>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-white p-3">
-                    <p className="text-xs font-semibold uppercase text-slate-500">Add liability deduction</p>
-                    <div className="mt-2 grid gap-2 md:grid-cols-3">
-                      <input
-                        className="field-input md:col-span-2"
-                        placeholder="Label (e.g., prior liabilities)"
-                        value={pendingLiabilityDeduction.label}
-                        onChange={(event) =>
-                          setPendingLiabilityDeduction((prev) => ({ ...prev, label: event.target.value }))
-                        }
-                      />
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        className="field-input"
-                        placeholder="Amount"
-                        value={pendingLiabilityDeduction.amount}
-                        onChange={(event) =>
-                          setPendingLiabilityDeduction((prev) => ({ ...prev, amount: event.target.value }))
-                        }
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      className="mt-2 btn-pill"
-                      onClick={addLiabilityDeduction}
-                    >
-                      Add liability deduction
-                    </button>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600">
-                    <p>
-                      Retainer deduction: <span className="font-semibold">{retainerDeductionAmount.toLocaleString()} {caseState.data.currency}</span>
-                    </p>
-                    <p>
-                      Extra deductions: <span className="font-semibold">{customDeductionsTotal.toLocaleString()} {caseState.data.currency}</span>
-                    </p>
-                    <p>
-                      Total deductions: <span className="font-semibold">{payoutTotalDeductions.toLocaleString()} {caseState.data.currency}</span>
-                    </p>
-                    <p>
-                      Net payout to beneficiary: <span className="font-semibold">{payoutNetPreview.toLocaleString()} {caseState.data.currency}</span>
-                    </p>
-                  </div>
-                  {payoutDeductions.length > 0 && (
-                    <div className="rounded-xl border border-slate-200 bg-white p-3">
-                      <p className="text-xs font-semibold uppercase text-slate-500">Queued deductions</p>
-                      <ul className="mt-2 space-y-2 text-xs text-slate-700">
-                        {payoutDeductions.map((row) => (
-                          <li key={row.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-2 py-1">
-                            <span>
-                              {row.label} - {Number(row.amount).toLocaleString()} {caseState.data.currency}
-                            </span>
-                            <button
-                              type="button"
-                              className="btn-pill"
-                              onClick={() => removePayoutDeduction(row.id)}
-                            >
-                              Remove
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  <label className="text-xs text-slate-500">
-                    Channel
-                    <input
-                      required
-                      className="field-input"
-                      value={payoutForm.channel}
-                      onChange={(event) =>
-                        setPayoutForm((prev) => ({ ...prev, channel: event.target.value }))
-                      }
-                    />
-                  </label>
-                  <label className="text-xs text-slate-500">
-                    Reference
-                    <input
-                      className="field-input"
-                      value={payoutForm.reference}
-                      onChange={(event) =>
-                        setPayoutForm((prev) => ({ ...prev, reference: event.target.value }))
-                      }
-                    />
-                  </label>
-                  <label className="text-xs text-slate-500">
-                    Notes
-                    <textarea
-                      className="field-input"
-                      rows={3}
-                      value={payoutForm.notes}
-                      onChange={(event) =>
-                        setPayoutForm((prev) => ({ ...prev, notes: event.target.value }))
-                      }
-                    />
-                  </label>
-                  <label className="text-xs text-slate-500">
-                    Posting date/time
-                    <input
-                      type="datetime-local"
-                      className="field-input"
-                      value={payoutForm.disbursedAt}
-                      onChange={(event) =>
-                        setPayoutForm((prev) => ({ ...prev, disbursedAt: event.target.value }))
-                      }
-                    />
-                  </label>
-                  <button
-                    type="submit"
-                    className="btn-secondary"
-                  >
-                    Submit payout
-                  </button>
-                </form>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <DataTable
-                  title="Contributions"
-                  emptyLabel="No contributions yet."
-                  headers={['Contributor', 'Amount', 'Status', 'Date']}
-                  rows={caseState.data.contributions.map((contribution) => [
-                    contribution.contributorName,
-                    `${contribution.amount.toLocaleString()} ${contribution.currency}`,
-                    contribution.status,
-                    contribution.paidAt ? new Date(contribution.paidAt).toLocaleString() : '-',
-                  ])}
-                />
-                <DataTable
-                  title="Payouts"
-                  emptyLabel="No payouts yet."
-                  headers={['Gross', 'Deductions', 'Net', 'Channel', 'Status', 'Date']}
-                  rows={caseState.data.payouts.map((payout) => [
-                    `${(payout.grossAmount ?? payout.amount).toLocaleString()} ${payout.currency}`,
-                    `${(payout.totalDeductions ?? 0).toLocaleString()} ${payout.currency}`,
-                    `${(payout.netAmount ?? payout.amount).toLocaleString()} ${payout.currency}`,
-                    payout.channel,
-                    payout.status,
-                    payout.disbursedAt ? new Date(payout.disbursedAt).toLocaleString() : '-',
-                  ])}
-                />
-              </div>
-            </div>
-          )}
-        </section>
-      )}
+        )}
+      </section>
       </>
       )}
     </section>
@@ -1354,7 +2456,7 @@ function DataTable({
 }: {
   title: string;
   headers: string[];
-  rows: (string | number)[][];
+  rows: React.ReactNode[][];
   emptyLabel: string;
 }) {
   const [query, setQuery] = useState('');

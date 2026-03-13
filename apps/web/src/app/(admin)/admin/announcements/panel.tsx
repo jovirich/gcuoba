@@ -22,6 +22,8 @@ type FormState = {
   status: 'draft' | 'published';
 };
 
+type AnnouncementsViewTab = 'manage' | 'create';
+
 export function AnnouncementsPanel({
   initialAnnouncements,
   branches,
@@ -45,6 +47,7 @@ export function AnnouncementsPanel({
   const [scopeFilter, setScopeFilter] = useState<'all' | 'global' | 'branch' | 'class'>('all');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const [viewTab, setViewTab] = useState<AnnouncementsViewTab>('manage');
   const isScopeLocked = Boolean(activeScopeType);
 
   const effectiveScopeType = activeScopeType ?? formState.scopeType;
@@ -146,6 +149,7 @@ export function AnnouncementsPanel({
             : '',
         status: 'draft',
       });
+      setViewTab('manage');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create announcement.');
     } finally {
@@ -219,6 +223,34 @@ export function AnnouncementsPanel({
         </div>
       )}
 
+      <section className="rounded-xl border border-red-100 bg-red-50/70 p-2 shadow-sm">
+        <div className="grid gap-2 sm:grid-cols-2">
+          <button
+            type="button"
+            className={`rounded-lg border px-3 py-2 text-sm font-semibold transition ${
+              viewTab === 'manage'
+                ? 'border-red-300 bg-red-600 text-white shadow-sm'
+                : 'border-red-100 bg-white text-slate-700 hover:border-red-200 hover:bg-red-50'
+            }`}
+            onClick={() => setViewTab('manage')}
+          >
+            Manage announcements
+          </button>
+          <button
+            type="button"
+            className={`rounded-lg border px-3 py-2 text-sm font-semibold transition ${
+              viewTab === 'create'
+                ? 'border-red-300 bg-red-600 text-white shadow-sm'
+                : 'border-red-100 bg-white text-slate-700 hover:border-red-200 hover:bg-red-50'
+            }`}
+            onClick={() => setViewTab('create')}
+          >
+            Create announcement
+          </button>
+        </div>
+      </section>
+
+      {viewTab === 'create' && (
       <form onSubmit={handleCreate} className="space-y-4">
         <div className="grid gap-4 md:grid-cols-2">
           <label className="text-xs uppercase text-slate-500">
@@ -296,7 +328,9 @@ export function AnnouncementsPanel({
           Create announcement
         </button>
       </form>
+      )}
 
+      {viewTab === 'manage' && (
       <div className="rounded-2xl border border-slate-200">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
           <h3 className="text-sm font-semibold text-slate-900">Existing announcements</h3>
@@ -395,6 +429,7 @@ export function AnnouncementsPanel({
           />
         </div>
       </div>
+      )}
     </section>
   );
 }

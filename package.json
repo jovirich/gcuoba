@@ -9,6 +9,7 @@
     "dev": "npm run dev --workspace web",
     "dev:web": "npm run dev --workspace web",
     "dev:api": "npm run start:dev --workspace api",
+    "dev:mobile": "npm --prefix apps/mobile run start",
     "build": "npm run build --workspace api && npm run build --workspace web",
     "lint": "npm run lint --workspace api && npm run lint --workspace web"
   },

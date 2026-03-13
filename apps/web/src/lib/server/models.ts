@@ -17,6 +17,7 @@ const AUDIT_SCOPE_TYPES = ['global', 'branch', 'class', 'private'] as const;
 const DOCUMENT_SCOPE_TYPES = ['private', 'global', 'branch', 'class'] as const;
 const DOCUMENT_VISIBILITIES = ['private', 'scope', 'public'] as const;
 const EVENT_PARTICIPATION_STATUSES = ['interested', 'attending', 'not_attending'] as const;
+const WELFARE_BENEFICIARY_TYPES = ['member', 'external'] as const;
 
 const UserSchema = new Schema(
   {
@@ -355,12 +356,20 @@ const WelfareCaseSchema = new Schema(
     status: { type: String, enum: ['open', 'closed'], default: 'open' },
     totalRaised: { type: Number, default: 0 },
     totalDisbursed: { type: Number, default: 0 },
+    beneficiaryType: { type: String, enum: WELFARE_BENEFICIARY_TYPES, default: 'member' },
     beneficiaryName: { type: String, default: null },
     beneficiaryUserId: { type: String, default: null },
+    beneficiaryExternalDetails: { type: String, default: null },
+    attendanceRequired: { type: Boolean, default: false },
+    attendanceEventId: { type: String, default: null },
+    attendanceEventTitle: { type: String, default: null },
+    attendanceEventStartAt: { type: Date, default: null },
+    attendanceEventLocation: { type: String, default: null },
   },
   { collection: 'welfare_cases', timestamps: true },
 );
 WelfareCaseSchema.index({ status: 1, scopeType: 1, scopeId: 1, createdAt: -1 });
+WelfareCaseSchema.index({ attendanceEventId: 1 });
 
 const WelfareCategorySchema = new Schema(
   {
@@ -381,6 +390,8 @@ const WelfareContributionSchema = new Schema(
     amount: { type: Number, required: true },
     currency: { type: String, default: 'NGN' },
     notes: { type: String, default: null },
+    paymentEvidenceUrl: { type: String, default: null },
+    paymentEvidenceName: { type: String, default: null },
     paidAt: { type: Date, default: null },
     status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
     reviewedBy: { type: String, default: null },
